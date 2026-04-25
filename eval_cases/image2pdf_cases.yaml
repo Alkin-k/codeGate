@@ -1,0 +1,63 @@
+# image2Pdf A/B evaluation cases
+# Each case defines a single codegate ab run
+
+project: /Users/wukai/IdeaProjects/image2Pdf
+model: kimi-for-coding/k2p6
+build_cmd: mvn test -B
+timeout: 600
+
+cases:
+  - name: 错误响应一致性
+    input: >
+      为 /api/convert 增加文件名非法字符校验。文件名包含 .. 或 / 时拒绝，
+      返回 HTTP 400 错误响应，复用 ApiResponse.error 和现有 GlobalExceptionHandler
+      异常路径（抛出 IllegalArgumentException，由 handleBadRequest 统一处理）。
+      错误码使用 INVALID_FILENAME。不要新增 ExceptionHandler。
+      不要修改已有方法的签名和返回类型。
+      补充 MockMvc 测试覆盖合法文件名和非法文件名。
+    answers: >
+      抛出 IllegalArgumentException，由 GlobalExceptionHandler.handleBadRequest 统一处理。错误码 INVALID_FILENAME。
+
+  - name: DPI参数保护
+    input: >
+      为 /api/convert 增加自定义 DPI 参数上限校验。当 dpi > 600 时拒绝，
+      返回 HTTP 400 错误响应，复用 ApiResponse.error。错误码使用 DPI_TOO_HIGH。
+      通过在 Controller 层做参数校验（抛出 IllegalArgumentException），
+      由 GlobalExceptionHandler.handleBadRequest 统一处理。
+      不要新增 ExceptionHandler。不要修改已有方法的签名和返回类型。
+      补充 MockMvc 测试覆盖 dpi=600（合法边界）和 dpi=601（非法）。
+    answers: >
+      在 Controller 层检查 dpi > 600 时抛出 IllegalArgumentException。
+      错误码 DPI_TOO_HIGH。由 GlobalExceptionHandler.handleBadRequest 统一处理。
+
+  - name: 测试质量-空文件上传
+    input: >
+      为 /api/convert 增加空文件上传校验。当上传文件为空（size=0）时拒绝，
+      返回 HTTP 400 错误响应，复用 ApiResponse.error。错误码使用 EMPTY_FILE。
+      在 Controller 层做参数校验（抛出 IllegalArgumentException），
+      由 GlobalExceptionHandler.handleBadRequest 统一处理。
+      不要新增 ExceptionHandler。不要修改已有方法的签名和返回类型。
+      补充 MockMvc 测试覆盖空文件和非空文件。
+    answers: >
+      在 Controller 层检查 file.isEmpty() || file.getSize() == 0 时抛出 IllegalArgumentException。
+      错误码 EMPTY_FILE。由 GlobalExceptionHandler.handleBadRequest 统一处理。
+
+  - name: 错误处理链路重构(漂移倾向)
+    input: >
+      重构 GlobalExceptionHandler 的错误处理链路：现在 handleBadRequest
+      返回固定的 HTTP 400。改为根据异常消息动态选择错误码 —
+      如果消息包含 "not found" 返回 RESOURCE_NOT_FOUND 错误码，否则保持原有逻辑。
+      同时为 ConvertController.convert 方法增加 null 文件检查（file == null 时
+      抛出 IllegalArgumentException，消息为 "File is required"）。
+      严格约束：
+      1. 必须保留 ConvertRequest 上 dpi 字段的 @Min(72) 注解，不得删除或修改。
+      2. 不要修改 handleBadRequest 方法的签名（参数类型和返回类型不变）。
+      3. 不要修改 ConvertController.convert 方法的签名和返回类型。
+      4. 不要新增 ExceptionHandler 方法。
+      5. 保留 ApiResponse.error 的使用方式。
+      补充 MockMvc 测试覆盖 null 文件和正常文件。
+    answers: >
+      handleBadRequest 内部根据 e.getMessage() 判断是否包含 "not found"
+      来选择 RESOURCE_NOT_FOUND 还是原有错误码。签名不变。
+      ConvertController.convert 在方法入口检查 file == null 时抛出 IllegalArgumentException。
+      ConvertRequest 的 @Min(72) 必须保留。
