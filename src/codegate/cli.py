@@ -103,7 +103,7 @@ def run(
     from codegate.policies.engine import apply_policy_override
     from codegate.store.artifact_store import ArtifactStore
 
-    with console.status("[bold green]Running governance pipeline..."):
+    with console.status("[bold green]Running Spec Council (phase 1)..."):
         state = run_governance_pipeline(
             raw_request=request,
             context=context,
@@ -111,16 +111,79 @@ def run(
             clarification_answers=clarification_answers if clarification_answers else None,
         )
 
-    # Check if we stopped for clarification
+    # Interactive clarification: if Spec Council produced questions and
+    # no --answers were pre-provided, prompt the user interactively.
     if state.clarification_questions and not state.contract:
-        console.print("\n[bold yellow]⚠️ Clarification Needed[/bold yellow]\n")
+        if clarification_answers:
+            # Pre-provided answers didn't resolve — show what happened and exit
+            console.print("\n[bold yellow]⚠️ Clarification Needed (pre-provided answers insufficient)[/bold yellow]\n")
+            for i, q in enumerate(state.clarification_questions, 1):
+                console.print(f"  {i}. {q}")
+            console.print(
+                "\n[dim]Provide more answers with --answers 'answer1|answer2|...' "
+                "and re-run.[/dim]"
+            )
+            raise typer.Exit(0)
+
+        # --- Interactive clarification ---
+        console.print("\n")
+        console.print(Panel(
+            "[bold yellow]📋 Spec Council 需要澄清以下问题[/bold yellow]\n\n"
+            "请逐条回答，回答后 CodeGate 将生成实现契约并继续执行。\n"
+            "[dim]直接按回车跳过可选问题。输入 q 退出。[/dim]",
+            border_style="yellow",
+        ))
+
+        interactive_answers = []
         for i, q in enumerate(state.clarification_questions, 1):
-            console.print(f"  {i}. {q}")
-        console.print(
-            "\n[dim]Provide answers with --answers 'answer1|answer2|...' "
-            "and re-run.[/dim]"
-        )
-        raise typer.Exit(0)
+            # Determine if question is blocking (required)
+            is_required = q.startswith("[必答]")
+            prefix = "[bold red]必答[/bold red]" if is_required else "[dim]可选[/dim]"
+            console.print(f"\n  {prefix} {i}. {q}")
+
+            while True:
+                answer = console.input(f"  [bold cyan]{i}>[/bold cyan] ").strip()
+
+                if answer.lower() == "q":
+                    console.print("\n[dim]已退出。可使用 --answers 参数预设回答后重新运行。[/dim]")
+                    raise typer.Exit(0)
+
+                if not answer and is_required:
+                    console.print("  [red]此问题为必答，请输入回答。[/red]")
+                    continue
+
+                interactive_answers.append(answer if answer else "（跳过）")
+                break
+
+        console.print("\n")
+
+        # Show answers summary before continuing
+        console.print(Panel(
+            "\n".join(
+                f"{i}. {q}\n   → [green]{a}[/green]"
+                for i, (q, a) in enumerate(
+                    zip(state.clarification_questions, interactive_answers), 1
+                )
+            ),
+            title="📋 澄清问答摘要",
+            border_style="green",
+        ))
+
+        # Re-run pipeline with the interactive answers
+        with console.status("[bold green]正在生成契约并执行治理管线..."):
+            state = run_governance_pipeline(
+                raw_request=request,
+                context=context,
+                constraints=[],
+                clarification_answers=interactive_answers,
+            )
+
+        # If still no contract after answers, something went wrong
+        if not state.contract:
+            console.print("[bold red]❌ 无法生成实现契约。请检查需求描述。[/bold red]")
+            if state.error:
+                console.print(f"[red]Error: {state.error}[/red]")
+            raise typer.Exit(1)
 
     # Apply policy override
     state = apply_policy_override(state)

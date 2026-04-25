@@ -44,6 +44,18 @@ class ArtifactStore:
         if state.contract:
             self._save_json(run_dir / "contract.json", state.contract.model_dump(mode="json"))
 
+        # Save clarification Q&A (interactive or pre-provided)
+        if state.clarification_questions:
+            qa_data = {
+                "round": state.clarification_round,
+                "questions": state.clarification_questions,
+                "answers": state.clarification_answers,
+                "mode": "interactive" if not any(
+                    a.startswith("（跳过）") for a in state.clarification_answers
+                ) and state.clarification_answers else "pre-provided",
+            }
+            self._save_json(run_dir / "clarification_qa.json", qa_data)
+
         # Save execution report
         if state.execution_report:
             self._save_json(
@@ -143,6 +155,8 @@ class ArtifactStore:
             "raw_findings_count": len(state.raw_review_findings),
             "suppressed_findings_count": len(state.suppressed_findings),
             "clarification_rounds": state.clarification_round,
+            "clarification_questions": state.clarification_questions,
+            "clarification_answers": state.clarification_answers,
             "saved_at": datetime.now(timezone.utc).isoformat(),
         }
         self._save_json(run_dir / "summary.json", summary)
