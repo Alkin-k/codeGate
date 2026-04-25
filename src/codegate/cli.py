@@ -109,6 +109,7 @@ def run(
             context=context,
             constraints=[],
             clarification_answers=clarification_answers if clarification_answers else None,
+            clarification_mode="pre_provided" if clarification_answers else "none",
         )
 
     # Interactive clarification: if Spec Council produced questions and
@@ -169,13 +170,15 @@ def run(
             border_style="green",
         ))
 
-        # Re-run pipeline with the interactive answers
+        # Re-run pipeline with the interactive answers + original questions
         with console.status("[bold green]正在生成契约并执行治理管线..."):
             state = run_governance_pipeline(
                 raw_request=request,
                 context=context,
                 constraints=[],
                 clarification_answers=interactive_answers,
+                clarification_questions=state.clarification_questions,
+                clarification_mode="interactive",
             )
 
         # If still no contract after answers, something went wrong

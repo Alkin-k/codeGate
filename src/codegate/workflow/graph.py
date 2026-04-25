@@ -123,6 +123,8 @@ def run_governance_pipeline(
     context: str = "",
     constraints: list[str] | None = None,
     clarification_answers: list[str] | None = None,
+    clarification_questions: list[str] | None = None,
+    clarification_mode: str = "none",
     risk_level: str = "medium",
 ) -> GovernanceState:
     """Run the full governance pipeline for a given request.
@@ -135,6 +137,11 @@ def run_governance_pipeline(
         constraints: User-specified constraints
         clarification_answers: Pre-provided answers to clarification questions.
             If None, the pipeline will stop at spec_review for interactive Q&A.
+        clarification_questions: Questions from a prior Spec Council run.
+            Must be provided alongside answers for proper Q&A pairing in contract.
+        clarification_mode: How answers were collected:
+            "none" (no clarification), "interactive" (CLI prompt),
+            "pre_provided" (--answers flag).
         risk_level: Task risk level ('low', 'medium', 'high').
             Affects governance depth.
 
@@ -153,6 +160,8 @@ def run_governance_pipeline(
     initial_state = GovernanceState(
         work_item=work_item,
         clarification_answers=clarification_answers or [],
+        clarification_questions=clarification_questions or [],
+        clarification_mode=clarification_mode,
     )
 
     workflow = create_governance_workflow()

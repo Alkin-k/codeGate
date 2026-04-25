@@ -45,14 +45,12 @@ class ArtifactStore:
             self._save_json(run_dir / "contract.json", state.contract.model_dump(mode="json"))
 
         # Save clarification Q&A (interactive or pre-provided)
-        if state.clarification_questions:
+        if state.clarification_questions or state.clarification_answers:
             qa_data = {
                 "round": state.clarification_round,
                 "questions": state.clarification_questions,
                 "answers": state.clarification_answers,
-                "mode": "interactive" if not any(
-                    a.startswith("（跳过）") for a in state.clarification_answers
-                ) and state.clarification_answers else "pre-provided",
+                "mode": state.clarification_mode,
             }
             self._save_json(run_dir / "clarification_qa.json", qa_data)
 

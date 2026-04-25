@@ -29,6 +29,7 @@ class GovernanceState(BaseModel):
     clarification_questions: List[str] = Field(default_factory=list)
     clarification_answers: List[str] = Field(default_factory=list)
     clarification_round: int = 0
+    clarification_mode: str = "none"  # "none" | "interactive" | "pre_provided"
     contract: Optional[ImplementationContract] = None
 
     # === Executor outputs ===
