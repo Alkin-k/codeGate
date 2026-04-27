@@ -1,6 +1,6 @@
 """Global state definition for the LangGraph governance workflow."""
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -29,7 +29,7 @@ class GovernanceState(BaseModel):
     clarification_questions: List[str] = Field(default_factory=list)
     clarification_answers: List[str] = Field(default_factory=list)
     clarification_round: int = 0
-    clarification_mode: str = "none"  # "none" | "interactive" | "pre_provided"
+    clarification_mode: Literal["none", "interactive", "pre_provided"] = "none"
     contract: Optional[ImplementationContract] = None
 
     # === Executor outputs ===
