@@ -38,8 +38,20 @@ class GovernanceState(BaseModel):
     # === Review outputs ===
     review_findings: List[ReviewFinding] = Field(default_factory=list)
 
+    # === Audit evidence (structural pre-check pipeline) ===
+    structural_diff: Optional[Dict] = None        # Serialized BaselineDiffResult
+    raw_review_findings: List[ReviewFinding] = Field(default_factory=list)  # LLM output before post-filter
+    suppressed_findings: List[Dict] = Field(default_factory=list)  # Post-filtered with reasons
+
     # === Gate outputs ===
     gate_decision: Optional[GateDecision] = None
+
+    # === Iteration history (for per-iteration evidence) ===
+    iteration_history: List[Dict] = Field(default_factory=list)
+
+    # === Policy Engine results (for evidence) ===
+    policy_violations: List[str] = Field(default_factory=list)
+    policy_result: Optional[Dict] = None  # Structured policy result for artifact persistence
 
     # === Control flow ===
     current_phase: WorkflowStatus = WorkflowStatus.DRAFT

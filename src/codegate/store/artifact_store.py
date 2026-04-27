@@ -60,11 +60,31 @@ class ArtifactStore:
                 state.execution_report.model_dump(mode="json"),
             )
 
-        # Save review findings
-        if state.review_findings:
+        # Save review findings — always persist, even when empty ([])
+        # This ensures CLI evidence is machine-comparable with benchmark evidence.
+        self._save_json(
+            run_dir / "review_findings.json",
+            [f.model_dump(mode="json") for f in state.review_findings],
+        )
+
+        # === Audit evidence: structural pre-check pipeline ===
+
+        # Save structural diff (deterministic pre-check output)
+        if state.structural_diff:
+            self._save_json(run_dir / "structural_diff.json", state.structural_diff)
+
+        # Save raw review findings (LLM output BEFORE post-filter)
+        if state.raw_review_findings:
             self._save_json(
-                run_dir / "review_findings.json",
-                [f.model_dump(mode="json") for f in state.review_findings],
+                run_dir / "raw_review_findings.json",
+                [f.model_dump(mode="json") for f in state.raw_review_findings],
+            )
+
+        # Save suppressed findings (with suppression reasons)
+        if state.suppressed_findings:
+            self._save_json(
+                run_dir / "suppressed_findings.json",
+                state.suppressed_findings,
             )
 
         # Save gate decision
@@ -74,20 +94,66 @@ class ArtifactStore:
                 state.gate_decision.model_dump(mode="json"),
             )
 
+        # Save policy result (if available)
+        if state.policy_result:
+            self._save_json(run_dir / "policy_result.json", state.policy_result)
+
+        # Save phase timings (if available)
+        if state.phase_timings:
+            self._save_json(run_dir / "phase_timings.json", state.phase_timings)
+
+        # Save iteration history (per-iteration evidence for multi-round governance)
+        if state.iteration_history:
+            self._save_json(run_dir / "iteration_history.json", state.iteration_history)
+
+            # Also save per-iteration structured directories for detailed audit
+            iterations_dir = run_dir / "iterations"
+            iterations_dir.mkdir(exist_ok=True)
+            for entry in state.iteration_history:
+                iter_num = entry.get("iteration", 0)
+                iter_dir = iterations_dir / str(iter_num)
+                iter_dir.mkdir(exist_ok=True)
+                self._save_json(iter_dir / "gate_snapshot.json", entry)
+
         # Save run summary
+        # Derive gatekeeper's original decision from policy_result if available
+        gatekeeper_original = None
+        if state.policy_result and state.policy_result.get("gatekeeper_original_decision"):
+            gatekeeper_original = state.policy_result["gatekeeper_original_decision"]
+
         summary = {
             "work_item_id": work_item.id,
             "raw_request": work_item.raw_request,
             "final_status": work_item.status.value,
             "decision": state.gate_decision.decision if state.gate_decision else None,
+            "gatekeeper_original_decision": gatekeeper_original,
             "drift_score": state.gate_decision.drift_score if state.gate_decision else None,
             "coverage_score": state.gate_decision.coverage_score if state.gate_decision else None,
-            "iterations": state.iteration,
+            "timed_out": (
+                state.execution_report.timed_out
+                if state.execution_report and hasattr(state.execution_report, "timed_out")
+                else False
+            ),
+            "completed_iterations": len(state.iteration_history),
+            "max_iterations": state.max_iterations,
             "total_tokens": state.total_tokens,
             "phase_tokens": state.phase_tokens,
+            "phase_timings": state.phase_timings,
             "findings_count": len(state.review_findings),
             "blocking_findings": sum(1 for f in state.review_findings if f.blocking),
+            "advisory_findings": sum(
+                1 for f in state.review_findings
+                if getattr(f, "disposition", "advisory") == "advisory" and not f.blocking
+            ),
+            "info_findings": sum(
+                1 for f in state.review_findings
+                if getattr(f, "disposition", None) == "info"
+            ),
+            "raw_findings_count": len(state.raw_review_findings),
+            "suppressed_findings_count": len(state.suppressed_findings),
             "clarification_rounds": state.clarification_round,
+            "clarification_questions": state.clarification_questions,
+            "clarification_answers": state.clarification_answers,
             "saved_at": datetime.now(timezone.utc).isoformat(),
         }
         self._save_json(run_dir / "summary.json", summary)
