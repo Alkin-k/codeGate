@@ -1,7 +1,7 @@
 # image2Pdf A/B evaluation cases
 # Each case defines a single codegate ab run
 
-project: /Users/wukai/IdeaProjects/image2Pdf
+project: /path/to/your/image2Pdf    # ← 修改为你的项目路径
 model: kimi-for-coding/k2p6
 build_cmd: mvn test -B
 timeout: 600

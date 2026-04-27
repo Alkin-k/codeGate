@@ -133,7 +133,7 @@ codegate ab 自动执行 5 步：
 
 ```bash
 codegate ab \
-  --project /Users/wukai/IdeaProjects/image2Pdf \
+  --project /path/to/your/project \
   --input "为 /api/convert 增加文件名非法字符校验。文件名包含 .. 或 / 时拒绝，返回 HTTP 400 错误响应。" \
   --model kimi-for-coding/k2p6 \
   --case-name "错误响应一致性" \
