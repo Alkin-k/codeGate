@@ -1,6 +1,6 @@
 # CodeGate Alpha 试用指南
 
-> 版本: Alpha v0.1 | 日期: 2026-04-25 | 适用: 团队内测
+> 版本: Alpha v0.2 | 日期: 2026-04-27 | 适用: 团队内测
 
 ---
 
@@ -105,7 +105,7 @@ codegate ab \
 | `--input` | ✅ | 需求描述（中/英文均可） |
 | `--model` | ✅ | 执行器使用的模型 |
 | `--case-name` | 建议 | 人类可读的 case 名称 |
-| `--answers` | 建议 | 预设回答，跳过交互式 clarification（见 §9 已知限制） |
+| `--answers` | 可选 | 预设回答，跳过交互式 clarification（用于 batch 和自动化场景） |
 | `--build-cmd` | 可选 | 测试命令，默认 `mvn test -B` |
 | `--timeout` | 可选 | 执行器超时（秒），默认 600 |
 | `--output` | 可选 | 输出目录，默认 `ab_results/` |
@@ -333,18 +333,94 @@ but policy enforcement overrode to REVISE_CODE due to 1 blocking finding(s).
 | 测试质量-空文件上传 | 参数校验 | 低 |
 | 错误处理链路重构 | 逻辑重构 + 5 项保留约束 | 高（含 contract conflict） |
 
-## 9. 已知限制
+## 9. 交互式需求澄清（v0.2 新功能）
+
+当使用 `codegate run` 且不提供 `--answers` 时，Spec Council 会在 CLI 中交互式提问：
+
+```bash
+codegate run \
+  --input "为 /api/convert 增加文件名校验" \
+  --executor opencode \
+  --project-dir /path/to/project
+```
+
+### 9.1 交互流程
+
+```text
+🛡️ CodeGate Governance Pipeline
+  Requirement: 为 /api/convert 增加文件名校验
+  Executor: opencode
+
+╭─────────────────────────────────────────╮
+│ 📋 Spec Council 需要澄清以下问题       │
+│                                         │
+│ 请逐条回答，回答后 CodeGate 将生成      │
+│ 实现契约并继续执行。                    │
+│ 直接按回车跳过可选问题。输入 q 退出。   │
+╰─────────────────────────────────────────╯
+
+  必答 1. [必答] 非法文件名包含哪些字符？
+  1> 包含 .. 或 /
+
+  可选 2. [可选] 错误码应该使用什么？
+  2> INVALID_FILENAME
+
+  必答 3. [必答] 是否复用现有异常处理链路？
+  3> 是，抛 IllegalArgumentException，由 handleBadRequest 处理
+
+╭─── 📋 澄清问答摘要 ────────────────────╮
+│ 1. [必答] 非法文件名包含哪些字符？      │
+│    → 包含 .. 或 /                       │
+│ 2. [可选] 错误码应该使用什么？           │
+│    → INVALID_FILENAME                   │
+│ 3. [必答] 是否复用现有异常处理链路？     │
+│    → 是，抛 IllegalArgumentException    │
+╰─────────────────────────────────────────╯
+
+正在生成契约并执行治理管线...
+```
+
+### 9.2 两种模式对比
+
+| 模式 | 适用场景 | 命令 |
+|------|---------|------|
+| **交互式** | 首次探索、需求不确定 | `codegate run --input "..." --executor opencode` |
+| **预设回答** | 自动化、batch、CI | `codegate run --input "..." --answers "a1\|a2" --executor opencode` |
+
+### 9.3 证据产出
+
+交互式澄清完成后，额外生成 `clarification_qa.json`：
+
+```json
+{
+  "round": 1,
+  "questions": ["[必答] 非法文件名包含哪些字符？", "..."],
+  "answers": ["包含 .. 或 /", "..."],
+  "mode": "interactive"
+}
+```
+
+`summary.json` 中也包含 `clarification_questions` 和 `clarification_answers` 字段。
+
+### 9.4 注意事项
+
+- **必答问题** 不能跳过（直接按回车会提示重新输入）
+- **可选问题** 可以按回车跳过（记录为"（跳过）"）
+- 输入 `q` 可随时退出，下次使用 `--answers` 重跑
+- `codegate ab` 和 `codegate ab-batch` 仍然使用 `--answers` / YAML 中的 `answers` 字段，不支持交互
+
+## 10. 已知限制
 
 | 限制 | 说明 | Workaround |
 |------|------|------------|
-| **交互式 clarification 未完成** | Spec Council 提问时需要用 `--answers` 预设回答 | 先跑一次看它问什么，然后用 `--answers` 回答 |
+| **交互式 clarification** | `codegate run` 不带 `--answers` 时，Spec Council 会在 CLI 中交互式提问 | 如需非交互式，使用 `--answers` 预设回答 |
 | **单次运行耗时较长** | 典型 4-12 分钟，取决于模型和任务复杂度 | 用 batch 模式并行概念上的 case |
 | **必须在 clean copy 上跑** | CodeGate 自动创建临时副本，但源项目的 git status 必须干净 | 确保 `git status --porcelain` 输出为空 |
 | **LLM 非确定性** | 同一 case 多次运行可能产出不同代码 | 这正是 CodeGate 存在的意义 — 治理层兜底 |
 | **仅支持 OpenCode** | 当前只有 `opencode` 适配器 | 后续会增加 Cursor、Windsurf 等 |
 | **Maven 中心** | 测试解析器针对 Maven surefire 优化 | `build_cmd` 支持任意命令，但测试数解析可能不完整 |
 
-## 10. 推荐内测流程
+## 11. 推荐内测流程
 
 ### 第一步：跑内置 Case
 
@@ -391,6 +467,7 @@ codegate ab-batch --cases eval_cases/image2pdf_cases.yaml
 | `structural_diff.json` | 确定性基线 diff（removed/added/preserved patterns） | 有 baseline 时 |
 | `gate_decision.json` | Gatekeeper 裁决详情 | 每次运行 |
 | `policy_result.json` | Policy Engine 覆盖记录 | 每次运行 |
+| `clarification_qa.json` | 澄清问答记录（questions、answers、mode） | 有 clarification 时 |
 | `phase_timings.json` | 各阶段耗时 | 每次运行 |
 | `iteration_history.json` | 多轮迭代记录 | 有 retry 时 |
 

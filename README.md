@@ -3,7 +3,7 @@
 > An approval and quality gate layer for AI coding workflows.
 > 面向 AI Coding 的方案批准、偏航审计与质量门禁层。
 
-**Status: Alpha v0.1** — 可内测，非生产接入。
+**Status: Alpha v0.2** — 可内测，非生产接入。
 
 ## The Problem
 
@@ -16,11 +16,11 @@ Without governance, you get fast code that solves the wrong problem.
 CodeGate sits **between your requirements and your coding agents**:
 
 ```
-Requirement → Spec Council → Contract → Executor → Reviewer → Gatekeeper → Decision
-                  │                        │           │           │
-              Clarify &              AI coding     Drift      approve /
-              constrain              (OpenCode)   detection   revise_code /
-                                                             escalate_to_human
+Requirement → Spec Council ⇄ User Clarification → Contract → Executor → Reviewer → Gatekeeper → Decision
+                  │              │                     │           │           │           │
+              Dissect &     Interactive or         Approved    AI coding     Drift      approve /
+              question      --answers              contract   (OpenCode)   detection   revise_code /
+                                                                                      escalate_to_human
 ```
 
 1. 📋 **Spec Council** — Clarifies ambiguous requirements into an approved contract (goals, criteria, constraints)
@@ -43,7 +43,7 @@ Requirement → Spec Council → Contract → Executor → Reviewer → Gatekeep
 | Batch A/B evaluation | ✅ |
 | Auditor-ready evidence reports | ✅ |
 | Severity × Disposition classification | ✅ |
-| Interactive clarification | ❌ (backlog) |
+| Interactive clarification (CLI) | ✅ |
 
 ## Quick Start
 
@@ -63,8 +63,11 @@ codegate ab \
 # Run batch evaluation
 codegate ab-batch --cases eval_cases/image2pdf_cases.yaml
 
-# Run governance pipeline only
+# Run governance pipeline (interactive clarification)
 codegate run --input "your requirement" --executor opencode --executor-model kimi-for-coding/k2p6
+
+# Run governance pipeline (pre-provided answers, non-interactive)
+codegate run --input "your requirement" --answers "answer1|answer2" --executor opencode
 ```
 
 ## Team Alpha Trial
