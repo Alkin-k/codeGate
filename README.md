@@ -49,8 +49,10 @@ Requirement → Spec Council ⇄ User Clarification → Contract → Executor �
 
 ```bash
 # Install
-pip install -e .
-cp .env.example .env
+pip install git+https://github.com/Alkin-k/codeGate.git
+
+# Initialize config
+codegate init
 # Edit .env with your API key
 
 # Run single A/B evaluation
