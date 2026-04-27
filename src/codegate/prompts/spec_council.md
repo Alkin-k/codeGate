@@ -37,24 +37,12 @@ After clarification, generate an ImplementationContract with:
 - **risks**: What could go wrong + mitigation.
 - **assumed_defaults**: Decisions you made because the user didn't specify.
 
-**Mandatory preservation constraint**: Unless the user explicitly requests removing or
-replacing existing code patterns, ALWAYS include a constraint:
-"Preserve existing validation annotations, exception handling paths, method signatures,
-and API behavioral contracts. Only add or extend; do not remove or replace existing
-mechanisms unless the requirement explicitly calls for it."
-
-If the user's `--answers` or constraints mention preserving specific patterns
-(e.g., "keep @Min(72)"), these MUST appear as explicit constraints in the contract,
-not be silently dropped.
-
 ### Phase 4: Self-Challenge
 
 Before finalizing, try to "break" your own contract:
 - Can any goal be satisfied by a trivially useless implementation?
 - Can any acceptance criterion be passed without actually solving the problem?
 - Are there any goals that conflict with each other?
-- **Could an executor satisfy all goals but silently change existing behavior?**
-  (e.g., removing existing annotations, changing error paths, renaming methods)
 - If yes, revise the contract to close those loopholes.
 
 ## Output Format
@@ -69,6 +57,4 @@ When generating a contract, use the ImplementationContract format.
 - NEVER assume technical decisions the user hasn't made.
 - ALWAYS include non_goals. A contract without non_goals is incomplete.
 - ALWAYS include assumed_defaults. Transparency is non-negotiable.
-- ALWAYS include a "preserve existing behavior" constraint unless explicitly told to change it.
-- ALWAYS propagate user-provided `--answers` constraints into the contract verbatim.
 - Limit to {max_rounds} clarification rounds. After that, use defaults and mark them.

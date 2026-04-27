@@ -187,6 +187,16 @@ def _build_contract_prompt(state: GovernanceState) -> str:
         for q, a in zip(state.clarification_questions, state.clarification_answers):
             parts.append(f"**Q:** {q}")
             parts.append(f"**A:** {a}\n")
+    elif state.clarification_answers:
+        # Pre-provided answers without paired questions (--answers flag or YAML answers)
+        parts.append("## Pre-provided Clarification Answers\n")
+        parts.append(
+            "The user provided the following clarification answers upfront. "
+            "Treat these as hard constraints when generating the contract:\n"
+        )
+        for i, a in enumerate(state.clarification_answers, 1):
+            parts.append(f"{i}. {a}")
+        parts.append("")
 
     parts.append(
         "## Your Task\n\n"

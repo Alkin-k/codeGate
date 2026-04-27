@@ -3,6 +3,16 @@
 These rules are deterministic and run AFTER the LLM-based review,
 adding a layer of hard policy enforcement that cannot be overridden
 by model hallucination.
+
+Rule inventory:
+  Rule 1: Never approve with blocking findings
+  Rule 2: Never approve with high drift (>30, or >15 for high-risk)
+  Rule 3: Never approve with low coverage (<70, or <85 for high-risk)
+  Rule 4: Escalate after too many iterations
+  Rule 5: Security P0 findings always block
+  Rule 6: Never approve with unresolved items
+  Rule 7: Findings referencing assumed_defaults at P0/P1 block approve
+  Rule 8: Risk-level-aware enforcement (high-risk = stricter thresholds)
 """
 
 from __future__ import annotations
@@ -34,7 +44,8 @@ def evaluate_policies(state: GovernanceState) -> PolicyResult:
     """Run all hard policy rules against the current state.
 
     These policies can OVERRIDE the LLM gatekeeper's decision.
-    Rules 2/3 are risk-aware: high-risk tasks get stricter thresholds.
+    For example, if the gatekeeper says "approve" but there are
+    unresolved P0 findings, the policy engine will force "revise_code".
     """
     result = PolicyResult()
 
@@ -44,9 +55,9 @@ def evaluate_policies(state: GovernanceState) -> PolicyResult:
         return result
 
     decision = state.gate_decision
-    risk = state.work_item.risk_level  # "low", "medium", "high"
+    risk = state.work_item.risk_level
 
-    # --- Risk-aware thresholds (ADR-008) ---
+    # Risk-aware thresholds (Rule 8)
     max_drift = 15 if risk == "high" else 30
     min_coverage = 85 if risk == "high" else 70
 
@@ -93,7 +104,7 @@ def evaluate_policies(state: GovernanceState) -> PolicyResult:
         )
         result.override_decision = "escalate_to_human"
 
-    # Rule 6: Unresolved items block approval (ADR-007)
+    # Rule 6: Never approve with unresolved items
     if decision.decision == "approve" and state.execution_report:
         unresolved = state.execution_report.unresolved_items
         if unresolved:
@@ -103,30 +114,43 @@ def evaluate_policies(state: GovernanceState) -> PolicyResult:
             )
             result.override_decision = "revise_code"
 
-    # Rule 7: assumed_defaults violations block approval (ADR-007)
+    # Rule 7: Findings referencing assumed_defaults at P0/P1 block approve
+    #   If the reviewer found issues with assumed defaults, the implementation
+    #   is relying on unverified assumptions — this is a governance gap.
     if decision.decision == "approve":
-        assumed_violations = [
+        assumption_violations = [
             f for f in state.review_findings
-            if f.contract_clause_ref.startswith("assumed_defaults")
+            if "assumed_default" in f.contract_clause_ref
             and f.severity in ("P0", "P1")
         ]
-        if assumed_violations:
-            override = "escalate_to_human" if risk == "high" else "revise_code"
+        if assumption_violations:
             result.violations.append(
-                f"Cannot approve with {len(assumed_violations)} assumed_defaults "
-                f"violation(s) at P0/P1 severity"
+                f"Cannot approve with {len(assumption_violations)} finding(s) "
+                f"violating assumed defaults: "
+                + "; ".join(f.message[:60] for f in assumption_violations[:3])
             )
-            result.override_decision = override
+            # High-risk: escalate; otherwise: revise
+            if risk == "high":
+                result.override_decision = "escalate_to_human"
+            else:
+                result.override_decision = "revise_code"
 
-    # Rule 8: High-risk + multiple P0/P1 findings → escalate (ADR-008)
-    if decision.decision == "approve" and risk == "high":
-        severe = [
-            f for f in state.review_findings
-            if f.severity in ("P0", "P1")
-        ]
-        if len(severe) >= 2:
+    # Rule 8: High-risk tasks require human review if any P0/P1 findings exist
+    if (
+        decision.decision == "approve"
+        and risk == "high"
+        and any(f.severity in ("P0", "P1") for f in state.review_findings)
+    ):
+        p1_plus = [f for f in state.review_findings if f.severity in ("P0", "P1")]
+        result.warnings.append(
+            f"High-risk task approved with {len(p1_plus)} P0/P1 finding(s) — "
+            f"consider human review"
+        )
+        # Only override if there are multiple P1+ findings
+        if len(p1_plus) >= 2:
             result.violations.append(
-                f"High-risk task with {len(severe)} P0/P1 findings → escalate"
+                f"High-risk task cannot auto-approve with {len(p1_plus)} "
+                f"P0/P1 findings — requires human review"
             )
             result.override_decision = "escalate_to_human"
 
@@ -140,68 +164,22 @@ def evaluate_policies(state: GovernanceState) -> PolicyResult:
 
 
 def apply_policy_override(state: GovernanceState) -> GovernanceState:
-    """Apply policy engine results, potentially overriding the LLM decision.
-
-    When overriding, MUST sync: decision, summary, next_action, requires_human,
-    AND work_item.status (otherwise summary.final_status diverges from decision).
-    Persists violations list on state for evidence.
-    """
-    from codegate.schemas.work_item import WorkflowStatus
-
+    """Apply policy engine results, potentially overriding the LLM decision."""
     policy_result = evaluate_policies(state)
-
-    # Always persist policy evaluation result (even if no violations)
-    state.policy_violations = policy_result.violations
-    state.policy_result = {
-        "violations": policy_result.violations,
-        "override_applied": policy_result.has_violations and policy_result.override_decision is not None,
-        "override_decision": policy_result.override_decision,
-        "gatekeeper_original_decision": (
-            state.gate_decision.decision if state.gate_decision else None
-        ),
-    }
 
     if policy_result.has_violations and policy_result.override_decision:
         original = state.gate_decision.decision if state.gate_decision else "none"
-        new_decision = policy_result.override_decision
         logger.warning(
-            f"Policy override: {original} → {new_decision}"
+            f"Policy override: {original} → {policy_result.override_decision}"
         )
 
         if state.gate_decision:
-            state.gate_decision.decision = new_decision
+            state.gate_decision.decision = policy_result.override_decision
             state.gate_decision.summary += (
                 f"\n[POLICY OVERRIDE] Original decision was '{original}'. "
                 f"Overridden due to: {'; '.join(policy_result.violations)}"
             )
-
-            # Sync next_action to match the overridden decision
-            if new_decision == "escalate_to_human":
+            if policy_result.override_decision == "escalate_to_human":
                 state.gate_decision.requires_human = True
-                state.gate_decision.next_action = (
-                    f"[ESCALATED BY POLICY] "
-                    f"Violations: {'; '.join(policy_result.violations)}. "
-                    f"Requires human review before proceeding."
-                )
-            elif new_decision == "revise_code":
-                state.gate_decision.next_action = (
-                    f"[BLOCKED BY POLICY] "
-                    f"Violations: {'; '.join(policy_result.violations)}. "
-                    f"Revise code to address these issues."
-                )
-
-            # Sync work_item.status to match the overridden decision.
-            # Without this, summary.final_status stays as the original
-            # gatekeeper decision (e.g., "approved") while decision is
-            # "revise_code", causing misleading evidence.
-            status_map = {
-                "approve": WorkflowStatus.APPROVED,
-                "revise_code": WorkflowStatus.REVISE_CODE,
-                "revise_spec": WorkflowStatus.REVISE_SPEC,
-                "escalate_to_human": WorkflowStatus.ESCALATED,
-            }
-            new_status = status_map.get(new_decision, WorkflowStatus.ESCALATED)
-            state.work_item.transition_to(new_status)
 
     return state
-

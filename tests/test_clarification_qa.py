@@ -1,8 +1,8 @@
 """Test that clarification Q&A is properly carried through the pipeline.
 
-Verifies the core fix: when questions from Spec Council run 1 are paired
-with answers (interactive or --answers), they must appear in the contract
-generation prompt sent to the LLM.
+Two paths must work:
+1. Interactive: questions + answers → "Clarification Q&A" section in prompt
+2. Pre-provided: answers only (--answers / YAML) → "Pre-provided Clarification Answers" section
 """
 
 from __future__ import annotations
@@ -14,8 +14,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 
-def test_contract_prompt_includes_qa():
-    """Given questions + answers, _build_contract_prompt must include Q&A section."""
+def test_interactive_qa_in_contract_prompt():
+    """Interactive path: questions + answers → Clarification Q&A section."""
     from codegate.workflow.state import GovernanceState
     from codegate.schemas.work_item import WorkItem
     from codegate.agents.spec_council import _build_contract_prompt
@@ -39,22 +39,23 @@ def test_contract_prompt_includes_qa():
 
     prompt = _build_contract_prompt(state)
 
-    # Must contain Q&A section
-    assert "Clarification Q&A" in prompt, "Contract prompt must include Clarification Q&A section"
+    # Must contain Q&A section (not fallback)
+    assert "Clarification Q&A" in prompt, "Interactive path must use Q&A section"
+    assert "Pre-provided" not in prompt, "Interactive path must NOT use pre-provided section"
 
-    # Must contain the actual questions
-    assert "illegal in filenames" in prompt, "Contract prompt must include the question text"
-    assert "error code" in prompt, "Contract prompt must include the second question"
+    # Must contain questions
+    assert "illegal in filenames" in prompt, "Must include question text"
+    assert "error code" in prompt, "Must include second question"
 
-    # Must contain the actual answers
-    assert "Characters .. and /" in prompt, "Contract prompt must include the first answer"
-    assert "INVALID_FILENAME" in prompt, "Contract prompt must include the second answer"
+    # Must contain answers
+    assert "Characters .. and /" in prompt, "Must include first answer"
+    assert "INVALID_FILENAME" in prompt, "Must include second answer"
 
-    print("✅ test_contract_prompt_includes_qa PASSED")
+    print("✅ test_interactive_qa_in_contract_prompt PASSED")
 
 
-def test_contract_prompt_without_questions_has_no_qa():
-    """When answers are provided but questions list is empty, Q&A should NOT appear."""
+def test_pre_provided_answers_in_contract_prompt():
+    """Pre-provided path: answers without questions → Pre-provided Clarification Answers section."""
     from codegate.workflow.state import GovernanceState
     from codegate.schemas.work_item import WorkItem
     from codegate.agents.spec_council import _build_contract_prompt
@@ -63,23 +64,56 @@ def test_contract_prompt_without_questions_has_no_qa():
         work_item=WorkItem(
             raw_request="Add file name validation",
         ),
-        clarification_questions=[],  # BUG scenario: questions were lost
-        clarification_answers=["answer 1", "answer 2"],
+        clarification_questions=[],  # No questions — this is the --answers / YAML path
+        clarification_answers=[
+            "抛出 IllegalArgumentException，由 GlobalExceptionHandler.handleBadRequest 统一处理。",
+            "错误码 INVALID_FILENAME。",
+        ],
         clarification_round=1,
         clarification_mode="pre_provided",
     )
 
     prompt = _build_contract_prompt(state)
 
-    # Without questions, Q&A pairing is impossible — section should be absent
-    assert "Clarification Q&A" not in prompt, \
-        "Contract prompt should NOT have Q&A section when questions are empty"
+    # Must contain pre-provided section (not Q&A)
+    assert "Pre-provided Clarification Answers" in prompt, \
+        "Pre-provided path must use Pre-provided section"
+    assert "hard constraints" in prompt, \
+        "Pre-provided section must tell LLM to treat as constraints"
 
-    print("✅ test_contract_prompt_without_questions_has_no_qa PASSED")
+    # Must NOT use Q&A format
+    assert "Clarification Q&A" not in prompt, \
+        "Pre-provided path must NOT use Q&A section (no questions to pair)"
+
+    # Must contain the actual answers
+    assert "IllegalArgumentException" in prompt, "Must include first answer"
+    assert "INVALID_FILENAME" in prompt, "Must include second answer"
+
+    print("✅ test_pre_provided_answers_in_contract_prompt PASSED")
+
+
+def test_no_answers_no_section():
+    """When neither questions nor answers exist, no clarification section appears."""
+    from codegate.workflow.state import GovernanceState
+    from codegate.schemas.work_item import WorkItem
+    from codegate.agents.spec_council import _build_contract_prompt
+
+    state = GovernanceState(
+        work_item=WorkItem(raw_request="Simple requirement"),
+        clarification_questions=[],
+        clarification_answers=[],
+        clarification_mode="none",
+    )
+
+    prompt = _build_contract_prompt(state)
+
+    assert "Clarification" not in prompt, "No clarification section when no Q&A"
+
+    print("✅ test_no_answers_no_section PASSED")
 
 
 def test_state_carries_questions_through_pipeline_params():
-    """Verify run_governance_pipeline accepts and passes questions to initial state."""
+    """Verify GovernanceState correctly holds all clarification fields."""
     from codegate.workflow.state import GovernanceState
     from codegate.schemas.work_item import WorkItem
 
@@ -116,8 +150,9 @@ def test_clarification_mode_values():
 
 
 if __name__ == "__main__":
-    test_contract_prompt_includes_qa()
-    test_contract_prompt_without_questions_has_no_qa()
+    test_interactive_qa_in_contract_prompt()
+    test_pre_provided_answers_in_contract_prompt()
+    test_no_answers_no_section()
     test_state_carries_questions_through_pipeline_params()
     test_clarification_mode_values()
     print("\n🎉 All clarification tests passed!")

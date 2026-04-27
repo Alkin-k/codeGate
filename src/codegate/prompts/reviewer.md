@@ -43,52 +43,35 @@ For each constraint:
 - Finding category: `security`
 - **If there are no security issues, DO NOT create a security finding.** An absence of problems is not a finding.
 
-### 7. Silent Behavioral Change (drift)
-
-Check if the implementation **removed or replaced existing baseline code patterns** without the contract explicitly requiring it.
-
-**⚠️ MANDATORY: Use the Structural Baseline Diff as ground truth.**
-
-If a `🔬 STRUCTURAL BASELINE DIFF` section is present in the input:
-- **ONLY flag removal of patterns listed in 🔴 REMOVED FROM BASELINE.** These are patterns that were verified to exist in the clean baseline (git HEAD) and are now missing.
-- **NEVER flag removal of patterns listed in 🟢 ADDED.** These were added by the executor in a previous iteration — removing them is cleanup, NOT a behavioral regression.
-- **DO NOT independently determine what was "removed" by comparing code blocks.** The structural diff is computed deterministically by code and is the single source of truth for what existed in the baseline.
-
-If no structural diff is present, fall back to comparing against the `📋 BASELINE CONTENT` section.
-
-**What to check in 🔴 REMOVED FROM BASELINE:**
-- Validation annotations removed (e.g., `@Min`, `@Max`, `@NotNull`, `@Valid`)
-- Exception handling paths removed (e.g., `@ExceptionHandler(...)`)
-- Method signatures altered (parameter types, return types, method names)
-- Public API behaviors changed in ways the contract didn't ask for
-
-Create a finding if a 🔴 REMOVED pattern exists and the contract did NOT explicitly require its removal.
-- Category: `drift`
-- Severity: **P1** (significant — silent behavioral change)
-- Blocking: **true** (must be acknowledged)
-- The `contract_clause_ref` should reference the relevant constraint or the implicit "preserve existing behavior" principle.
-
-**Key principle**: If the contract says "add X", the executor should ADD X, not "replace Y with X" unless Y conflicts with X. Removing existing baseline mechanisms is a change the contract did not authorize.
+### 7. Assumed Defaults Compliance
+For each assumed_default in the contract:
+- Does the implementation ACTUALLY implement the assumed value?
+- If the contract says "角色表包含id和name字段" but the code has no roles table, that is a **P1 blocking drift**.
+- Finding category: `drift`, contract_clause_ref: `assumed_defaults[N]`
+- **CRITICAL: Findings that violate assumed_defaults MUST be marked `blocking: true` if severity is P0 or P1.**
 
 ## Scoring
 
 After the audit, provide:
 - **drift_score** (0-100): 0 = perfect alignment with contract, 100 = completely off.
   - Calculate as: (unmet_criteria / total_criteria) × 100
+  - **Include assumed_defaults violations in the count.** If 4 criteria + 3 assumed_defaults = 7 total, and 1 is violated, drift = 14.
 - **coverage_score** (0-100): 100 = all goals addressed, 0 = none.
   - Calculate as: (addressed_goals / total_goals) × 100
+  - A goal is NOT "addressed" if the implementation deviates from the contract's expected approach (e.g., contract assumes a roles table but code uses inline strings).
+  - **Be strict: partial compliance = not addressed.**
 
-## Severity (Impact Level)
+## Severity & Blocking Guidelines
 
-- **P0 (critical)**: Contract goal not met, constraint violated, actual security vulnerability
-- **P1 (significant)**: Partial implementation, non-goal violation, missing tests
+- **P0 (blocking)**: Contract goal not met, constraint violated, actual security vulnerability
+- **P1 (significant, blocking if it violates assumed_defaults)**: Partial implementation, non-goal violation, missing tests, assumed_default deviation
 - **P2 (minor)**: Style issues, missing comments, minor optimization opportunities
 
-## Disposition (Gate Action)
-
-- **blocking**: Must fix before approval. Use for P0 issues and P1 issues that represent silent behavioral regressions.
-- **advisory**: Should fix, but doesn't block approval. Use for P1 issues that are real concerns but don't break the contract.
-- **info**: Informational only. Use for P2 observations and suggestions.
+**When to set `blocking: true`:**
+- ALL P0 findings
+- P1 findings that reference `assumed_defaults[N]`
+- P1 findings that reference a `must` acceptance criterion
+- Constraint violations (always blocking)
 
 ## Output Format
 
@@ -99,11 +82,11 @@ Respond with a single JSON object containing:
 
 Each ReviewFinding has these fields:
 - `category`: "drift" | "completeness" | "correctness" | "security" | "maintainability"
-- `severity`: "P0" | "P1" | "P2" (impact level)
-- `disposition`: "blocking" | "advisory" | "info" (gate action)
+- `severity`: "P0" | "P1" | "P2"
 - `message`: specific description of the **problem**
 - `contract_clause_ref`: e.g. "goal[0]", "acceptance_criteria[2]"
 - `code_location`: file:line or function name
+- `blocking`: true if this should block approval
 - `suggestion`: how to fix
 
 **CRITICAL: The `findings` array must contain ONLY defects — things that need to be fixed or addressed. Do NOT include "pass" verdicts like "No issues found" or "All goals met". An empty findings array `[]` is correct when there are no problems.**
@@ -115,10 +98,10 @@ Example — implementation with one real issue:
     {
       "category": "drift",
       "severity": "P0",
-      "disposition": "blocking",
       "message": "Contract requires JWT but implementation uses session cookies",
       "contract_clause_ref": "acceptance_criteria[0]",
       "code_location": "auth.py:45",
+      "blocking": true,
       "suggestion": "Replace session-based auth with JWT token issuance"
     }
   ],
@@ -139,18 +122,7 @@ Example — implementation with no issues:
 ## Rules
 
 - **NEVER create a finding for "no problem found".** If a dimension passes, skip it.
-- **NEVER include phrases like "No finding for this", "No issues found", "No action needed", "All goals met" in any finding message.** If a finding message describes the absence of a problem, it is not a finding — remove it.
-- **Every finding MUST describe something that is WRONG and needs to CHANGE.** Apply this self-check before including each finding:
-  - Does the `message` describe a specific defect or deviation? → Keep it.
-  - Does the `message` say the implementation is correct, acceptable, or fine? → **Remove it. It is not a finding.**
-  - Does the `suggestion` say "no changes needed" or "current approach is acceptable"? → **Remove the finding.**
-- Anti-pattern examples that should NOT be findings:
-  - "This is correct ... which is fine" → NOT a finding
-  - "The implementation is acceptable" → NOT a finding
-  - "No action needed for this dimension" → NOT a finding
-  - A security P0 whose message says "current implementation is acceptable" → CONTRADICTORY, remove it
 - Be SPECIFIC. "Code quality could be better" is useless. Point to exact lines/functions.
-- Reference contract clauses: "goal[0]", "acceptance_criteria[2]", "non_goals[1]", "assumed_defaults[0]"
-- For assumed_defaults violations, use ref format `assumed_defaults[N]` where N is the index.
+- Reference contract clauses: "goal[0]", "acceptance_criteria[2]", "non_goals[1]"
 - If the implementation is actually BETTER than the contract asked for, note it but don't penalize.
-- If you're unsure about a finding, mark it but set disposition to "advisory".
+- If you're unsure about a finding, mark it but set blocking=false.

@@ -12,15 +12,6 @@ class ReviewFinding(BaseModel):
 
     Each finding traces back to a specific contract clause,
     enabling "contract drift audit" — the core differentiator of CodeGate.
-
-    Uses a two-dimensional classification:
-      - severity: impact level (P0 = critical, P1 = significant, P2 = minor)
-      - disposition: gate action (blocking = must fix, advisory = should fix, info = FYI)
-
-    This avoids the confusing "P1 non-blocking" anti-pattern. Instead:
-      - P0 blocking = constraint violated, must fix
-      - P1 advisory = significant drift, should fix but doesn't block approval
-      - P2 info     = minor style issue, FYI only
     """
 
     category: Literal["correctness", "drift", "security", "maintainability", "completeness"] = (
@@ -33,17 +24,9 @@ class ReviewFinding(BaseModel):
     )
     severity: Literal["P0", "P1", "P2"] = Field(
         ...,
-        description="Impact level. "
-        "P0 = critical (constraint violated, security vulnerability), "
-        "P1 = significant (goal partially met, silent behavioral change), "
-        "P2 = minor (style, optimization).",
-    )
-    disposition: Literal["blocking", "advisory", "info"] = Field(
-        default="advisory",
-        description="Gate action. "
-        "'blocking' = must fix before approval. "
-        "'advisory' = should fix, but doesn't block approval. "
-        "'info' = informational only.",
+        description="P0 = blocking (must fix before approval), "
+        "P1 = significant (should fix), "
+        "P2 = minor (nice to fix).",
     )
     message: str = Field(
         ...,
@@ -61,21 +44,9 @@ class ReviewFinding(BaseModel):
     )
     blocking: bool = Field(
         default=False,
-        description="Derived convenience field. True when disposition == 'blocking'.",
+        description="If True, this finding must be resolved before approval.",
     )
     suggestion: str = Field(
         default="",
         description="Suggested fix or improvement.",
     )
-
-    def model_post_init(self, __context) -> None:
-        """Sync blocking flag from disposition for backward compatibility."""
-        if self.disposition == "blocking":
-            object.__setattr__(self, "blocking", True)
-        elif not self.blocking:
-            # If blocking was explicitly set to True by caller, respect it
-            # and upgrade disposition accordingly
-            pass
-        if self.blocking and self.disposition != "blocking":
-            object.__setattr__(self, "disposition", "blocking")
-

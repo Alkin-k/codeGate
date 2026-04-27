@@ -140,8 +140,7 @@ def run_governance_pipeline(
         clarification_questions: Questions from a prior Spec Council run.
             Must be provided alongside answers for proper Q&A pairing in contract.
         clarification_mode: How answers were collected:
-            "none" (no clarification), "interactive" (CLI prompt),
-            "pre_provided" (--answers flag).
+            "none" | "interactive" | "pre_provided".
         risk_level: Task risk level ('low', 'medium', 'high').
             Affects governance depth.
 
@@ -201,12 +200,6 @@ def _reconstruct_state(data: dict) -> GovernanceState:
         data["review_findings"] = [
             ReviewFinding(**f) if isinstance(f, dict) else f
             for f in data["review_findings"]
-        ]
-
-    if isinstance(data.get("raw_review_findings"), list):
-        data["raw_review_findings"] = [
-            ReviewFinding(**f) if isinstance(f, dict) else f
-            for f in data["raw_review_findings"]
         ]
 
     if isinstance(data.get("gate_decision"), dict):

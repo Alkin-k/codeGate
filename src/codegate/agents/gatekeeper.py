@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 
 from codegate.config import get_config
 from codegate.llm import call_llm_json, load_prompt
@@ -40,41 +39,14 @@ def run_gatekeeper(state: GovernanceState) -> GovernanceState:
     try:
         decision = _parse_decision(result, state)
 
-        # Capture the current round index BEFORE any increment.
-        # This ensures the audit trail shows round 1, 2, 3... naturally.
-        round_index = state.iteration
-
-        state.gate_decision = decision
-
-        # Record per-iteration snapshot for audit trail (before increment)
-        snapshot = {
-            "round": round_index,
-            "iteration": round_index,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "decision": decision.decision,
-            "drift_score": decision.drift_score,
-            "coverage_score": decision.coverage_score,
-            "findings_count": len(state.review_findings),
-            "blocking_count": sum(1 for f in state.review_findings if f.blocking),
-            "findings": [
-                {
-                    "category": f.category,
-                    "severity": f.severity,
-                    "message": f.message[:120],
-                    "blocking": f.blocking,
-                    "contract_clause_ref": f.contract_clause_ref,
-                }
-                for f in state.review_findings
-            ],
-            "summary": decision.summary[:200],
-            "next_action": decision.next_action[:200] if decision.next_action else "",
-        }
-        state.iteration_history.append(snapshot)
-
-        # Increment iteration counter AFTER snapshot so audit trail is natural.
+        # Increment iteration counter BEFORE storing the decision so that
+        # the persisted GateDecision.iteration matches the actual state.
         if decision.decision in ("revise_code", "revise_spec"):
             state.iteration += 1
+            # Update the decision's iteration to reflect the real state
             decision.iteration = state.iteration
+
+        state.gate_decision = decision
 
         # Update work item status based on decision
         status_map = {
@@ -90,7 +62,7 @@ def run_gatekeeper(state: GovernanceState) -> GovernanceState:
         logger.info(
             f"Gate decision: {decision.decision} "
             f"(drift={decision.drift_score}, coverage={decision.coverage_score}, "
-            f"round={round_index}, iteration={state.iteration}/{state.max_iterations})"
+            f"iteration={state.iteration}/{state.max_iterations})"
         )
     except Exception as e:
         logger.error(f"Failed to parse gate decision: {e}")
@@ -152,17 +124,11 @@ def _build_gate_prompt(state: GovernanceState) -> str:
     parts.append(f"Coverage Score: {coverage}/100 (higher is better)")
 
     parts.append(
-        f"\n## Iteration: {state.iteration}/{state.max_iterations}\n"
+        f"\n## Risk Level: {state.work_item.risk_level.upper()}\n"
     )
-
-    # Include risk level for risk-aware decisions
-    risk = state.work_item.risk_level
-    parts.append(f"## Risk Level: {risk.upper()}\n")
-    if risk == "high":
-        parts.append(
-            "⚠️ HIGH RISK — stricter thresholds apply: "
-            "max_drift=15, min_coverage=85, ≥2 P0/P1 → escalate\n"
-        )
+    parts.append(
+        f"## Iteration: {state.iteration}/{state.max_iterations}\n"
+    )
 
     parts.append(
         "\n## Your Task\n\n"
