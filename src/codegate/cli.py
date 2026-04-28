@@ -113,7 +113,7 @@ def run(
         "builtin_llm",
         "--executor",
         "-e",
-        help="Executor adapter: builtin_llm, opencode",
+        help="Executor adapter: builtin_llm, opencode, gemini",
     ),
     executor_model: str = typer.Option(
         "",
@@ -156,6 +156,16 @@ def run(
         )
         set_executor_adapter(adapter)
         console.print(f"[green]Using opencode executor[/green] (model={executor_model or 'default'}, timeout={timeout}s)")
+    elif executor == "gemini":
+        from codegate.adapters.gemini import GeminiCLIAdapter
+        from codegate.agents.executor import set_executor_adapter
+        adapter = GeminiCLIAdapter(
+            model=executor_model,
+            timeout=timeout,
+            project_dir=project_dir if project_dir else None,
+        )
+        set_executor_adapter(adapter)
+        console.print(f"[green]Using gemini executor[/green] (model={executor_model or 'default'}, timeout={timeout}s)")
 
     # Parse pre-provided answers
     clarification_answers = []

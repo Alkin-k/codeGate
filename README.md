@@ -38,7 +38,8 @@ Requirement
          ▼
 ┌─────────────────┐
 │  Executor        │ ← Passes contract to any AI coding agent
-│  (OpenCode)      │
+│  (OpenCode /     │
+│   Gemini CLI)    │
 └────────┬────────┘
          ▼
 ┌─────────────────┐
@@ -62,11 +63,15 @@ pip install git+https://github.com/Alkin-k/codeGate.git
 codegate init
 # Edit .env with your API key
 
-# Run governance pipeline (interactive)
+# Run governance pipeline — OpenCode executor (interactive)
 codegate run --input "add filename validation to /api/convert" \
   --executor opencode --executor-model kimi-for-coding/k2p6
 
-# Run governance pipeline (non-interactive)
+# Run governance pipeline — Gemini CLI executor
+codegate run --input "add filename validation" \
+  --executor gemini --project-dir /path/to/project
+
+# Run governance pipeline (non-interactive, pre-provided answers)
 codegate run --input "add filename validation" \
   --answers "support pdf,jpg,png|max 50MB" --executor opencode
 
@@ -160,7 +165,7 @@ Quick path:
 ## Honest Limitations
 
 - **Alpha stage** — not production-ready, API may change
-- **Executor support** — currently OpenCode only (Cursor/Windsurf adapters planned)
+- **Executor support** — currently OpenCode and Gemini CLI (Cursor/Windsurf adapters planned)
 - **LLM non-determinism** — each run may produce slightly different results
 - **Governance overhead** — ~20s per task (the price of behavioral safety)
 

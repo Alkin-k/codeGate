@@ -4,7 +4,7 @@ The executor is EXTERNAL to the governance system. This adapter pattern
 allows plugging in different execution backends:
 
   - BuiltinLLMExecutor: simulated executor using LLM (for testing only)
-  - Future: OpenCodeAdapter, OMOAdapter, ClaudeCodeAdapter, CodexAdapter
+  - Future: OpenCodeAdapter, OMOAdapter, ClaudeCodeAdapter, CodexAdapter, GeminiCLIAdapter
 
 The governance layer (spec_council → reviewer → gatekeeper) is
 executor-agnostic. It only cares about the ImplementationContract
