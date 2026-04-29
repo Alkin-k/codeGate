@@ -33,6 +33,7 @@ ab_results/
 artifacts/
 benchmark_results/
 real_project_results/
+test_results/
 
 # Backup files
 *.bak

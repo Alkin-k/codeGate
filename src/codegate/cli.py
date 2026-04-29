@@ -498,11 +498,12 @@ def _display_results(state, run_dir):
 
         for f in state.review_findings:
             sev_style = {"P0": "red bold", "P1": "yellow", "P2": "dim"}.get(f.severity, "")
+            disposition = "blocking" if f.blocking else "advisory"
             disp_display = {
                 "blocking": "[red]🚫 block[/red]",
                 "advisory": "[yellow]⚠ advise[/yellow]",
                 "info": "[dim]ℹ info[/dim]",
-            }.get(f.disposition, f.disposition)
+            }.get(disposition, disposition)
             table.add_row(
                 f"[{sev_style}]{f.severity}[/{sev_style}]",
                 f.category,

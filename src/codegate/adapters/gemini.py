@@ -22,7 +22,6 @@ import logging
 import os
 import shutil
 import subprocess
-import tempfile
 import time
 from pathlib import Path
 from typing import Optional
@@ -448,8 +447,15 @@ class GeminiCLIAdapter(ExecutorAdapter):
         - changed_files: filepath → current content
         - baseline_content: filepath → content at HEAD (only for MODIFIED files)
         """
-        if not (Path(work_dir) / ".git").exists():
+        prefix_result = subprocess.run(
+            ["git", "-C", work_dir, "rev-parse", "--show-prefix"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if prefix_result.returncode != 0:
             return None
+        git_prefix = prefix_result.stdout.strip()
 
         result = subprocess.run(
             [
@@ -473,28 +479,35 @@ class GeminiCLIAdapter(ExecutorAdapter):
         changed: dict[str, str] = {}
         baseline: dict[str, str] = {}
         for status, rel in entries:
-            if self._is_ignored_relative_path(rel):
+            if git_prefix and rel.startswith(git_prefix):
+                git_rel = rel
+                project_rel = rel[len(git_prefix):]
+            else:
+                git_rel = f"{git_prefix}{rel}"
+                project_rel = rel
+
+            if self._is_ignored_relative_path(project_rel):
                 continue
-            abs_path = Path(work_dir) / rel
+            abs_path = Path(work_dir) / project_rel
             if not abs_path.exists():
-                changed[rel] = "<deleted>"
+                changed[project_rel] = "<deleted>"
                 continue
             try:
-                changed[rel] = abs_path.read_text(encoding="utf-8", errors="replace")
+                changed[project_rel] = abs_path.read_text(encoding="utf-8", errors="replace")
             except Exception:
-                changed[rel] = "<binary or unreadable>"
+                changed[project_rel] = "<binary or unreadable>"
 
             # For MODIFIED files (not new/untracked), capture baseline from HEAD
             if status.strip() and not status.strip().startswith("?"):
                 try:
                     head_result = subprocess.run(
-                        ["git", "-C", work_dir, "show", f"HEAD:{rel}"],
+                        ["git", "-C", work_dir, "show", f"HEAD:{git_rel}"],
                         capture_output=True,
                         text=True,
                         timeout=5,
                     )
                     if head_result.returncode == 0:
-                        baseline[rel] = head_result.stdout
+                        baseline[project_rel] = head_result.stdout
                 except Exception:
                     pass  # New file or error — no baseline
 

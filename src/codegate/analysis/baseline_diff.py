@@ -14,10 +14,14 @@ suppressed if X does not appear in `removed_from_baseline`.
 
 from __future__ import annotations
 
-import re
+import difflib
 import logging
-from dataclasses import dataclass, field, asdict
+import re
+from dataclasses import asdict, dataclass, field
 from typing import Dict, List, Optional
+
+from codegate.config import get_config
+from codegate.llm import call_llm_json, load_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +68,10 @@ class BaselineDiffResult:
         lines = []
 
         if self.removed_from_baseline:
-            lines.append("🔴 REMOVED FROM BASELINE (these were in the original code and are now gone):")
+            lines.append(
+                "🔴 REMOVED FROM BASELINE "
+                "(these were in the original code and are now gone):"
+            )
             for p in self.removed_from_baseline:
                 lines.append(f"  - [{p.kind}] {p.pattern} in {p.file}:{p.line_number}")
                 if p.context:
@@ -123,10 +130,15 @@ _PYTHON_DECORATOR_RE = re.compile(
 )
 
 
-def _extract_patterns(filepath: str, content: str) -> List[PatternMatch]:
-    """Extract trackable patterns from a single source file.
+def _extract_patterns_regex_fallback(filepath: str, content: str) -> List[PatternMatch]:
+    """Extract trackable patterns using regex from a single source file.
 
-    Returns patterns for: annotations, exception handlers, method signatures.
+    Language-aware routing:
+      - .java → annotations, exception handlers, method signatures
+      - .py   → decorators
+      - .ts/.tsx/.vue → router guards, auth conditions, route meta, storage, imports
+      - .rs   → tauri commands, function signatures, SQL pagination, use statements
+      - other → generic fallback (Java + Python patterns)
     """
     patterns: List[PatternMatch] = []
     lines = content.split("\n")
@@ -138,6 +150,16 @@ def _extract_patterns(filepath: str, content: str) -> List[PatternMatch]:
         patterns.extend(_extract_java_patterns(filepath, content, lines))
     elif ext == "py":
         patterns.extend(_extract_python_patterns(filepath, content, lines))
+    elif ext in ("ts", "tsx", "vue"):
+        from codegate.analysis.structural_extractors.typescript import (
+            extract_typescript_patterns,
+        )
+        patterns.extend(extract_typescript_patterns(filepath, content))
+    elif ext == "rs":
+        from codegate.analysis.structural_extractors.rust import (
+            extract_rust_patterns,
+        )
+        patterns.extend(extract_rust_patterns(filepath, content))
     else:
         # Generic: try both
         patterns.extend(_extract_java_patterns(filepath, content, lines))
@@ -222,48 +244,150 @@ def _extract_python_patterns(
 # ---------------------------------------------------------------------------
 
 
+def _get_diff_chunks(
+    baseline_str: str,
+    current_str: str,
+    context_lines: int = 10,
+) -> tuple[str, str]:
+    """Generate isolated context chunks for LLM extraction to save tokens."""
+    b_lines = baseline_str.splitlines()
+    c_lines = current_str.splitlines()
+    diff = list(difflib.unified_diff(b_lines, c_lines, n=context_lines))
+    if not diff:
+        return "", ""
+
+    baseline_chunk_lines = []
+    current_chunk_lines = []
+
+    for line in diff[2:]:
+        if line.startswith("@@"):
+            baseline_chunk_lines.append(line)
+            current_chunk_lines.append(line)
+        elif line.startswith("-"):
+            baseline_chunk_lines.append(line[1:])
+        elif line.startswith("+"):
+            current_chunk_lines.append(line[1:])
+        elif line.startswith(" "):
+            baseline_chunk_lines.append(line[1:])
+            current_chunk_lines.append(line[1:])
+
+    return "\n".join(baseline_chunk_lines), "\n".join(current_chunk_lines)
+
+
+def _extract_patterns_llm(filepath: str, chunk_content: str) -> Optional[List[PatternMatch]]:
+    """Optional enrichment: use an LLM to extract structural patterns from code chunks."""
+    if not chunk_content.strip():
+        return []
+
+    try:
+        config = get_config()
+        if not config.models.extract_model:
+            return []
+
+        system_prompt = load_prompt("structural_extractor")
+        user_message = f"File: {filepath}\n\nCode Chunk:\n```\n{chunk_content}\n```\n"
+
+        parsed, _ = call_llm_json(
+            model=config.models.extract_model,
+            system_prompt=system_prompt,
+            user_message=user_message,
+            temperature=0.0,
+        )
+
+        patterns_list = parsed.get("patterns", [])
+        result = []
+        for p in patterns_list:
+            result.append(
+                PatternMatch(
+                    file=filepath,
+                    pattern=p.get("pattern", ""),
+                    kind=p.get("kind", "other"),
+                    line_number=0,  # Context chunk extraction doesn't maintain global line numbers
+                    context=p.get("pattern", ""),
+                )
+            )
+        return result
+    except Exception as e:
+        logger.warning(f"LLM pattern extraction failed for {filepath}: {e}")
+        return None
+
+
+def _merge_patterns(
+    deterministic: List[PatternMatch],
+    enriched: Optional[List[PatternMatch]],
+) -> List[PatternMatch]:
+    """Merge optional LLM-enriched patterns into deterministic extractor output."""
+    if not enriched:
+        return deterministic
+
+    merged = list(deterministic)
+    seen = {(p.pattern.strip(), p.kind) for p in deterministic}
+    for pattern in enriched:
+        key = (pattern.pattern.strip(), pattern.kind)
+        if key not in seen:
+            merged.append(pattern)
+            seen.add(key)
+    return merged
+
+
 def compute_baseline_diff(
     baseline_content: Dict[str, str],
     files_content: Dict[str, str],
 ) -> BaselineDiffResult:
     """Compare baseline (git HEAD) against current implementation.
 
-    For each file that appears in both baseline_content and files_content:
-    1. Extract patterns from both versions
-    2. Compute which patterns were REMOVED, ADDED, or PRESERVED
-
-    The comparison key is (pattern, kind) — line numbers are expected to change.
+    Facts are produced by deterministic regex extractors first. If
+    CODEGATE_EXTRACT_MODEL is configured, an LLM extractor may add extra
+    patterns from localized diff chunks, but it never replaces the
+    deterministic output.
     """
     result = BaselineDiffResult()
 
-    # Only compare files that exist in BOTH baseline and current
     common_files = set(baseline_content.keys()) & set(files_content.keys())
 
     for filepath in sorted(common_files):
-        baseline_patterns = _extract_patterns(filepath, baseline_content[filepath])
-        current_patterns = _extract_patterns(filepath, files_content[filepath])
+        b_content = baseline_content[filepath]
+        c_content = files_content[filepath]
+
+        b_patterns = _extract_patterns_regex_fallback(filepath, b_content)
+        c_patterns = _extract_patterns_regex_fallback(filepath, c_content)
+
+        # Optional enrichment. This is deliberately gated by CODEGATE_EXTRACT_MODEL
+        # so offline/default runs stay deterministic and do not pay LLM latency.
+        if get_config().models.extract_model:
+            b_chunk, c_chunk = _get_diff_chunks(b_content, c_content, context_lines=10)
+
+            if b_chunk or c_chunk:
+                b_patterns = _merge_patterns(
+                    b_patterns,
+                    _extract_patterns_llm(filepath, b_chunk),
+                )
+                c_patterns = _merge_patterns(
+                    c_patterns,
+                    _extract_patterns_llm(filepath, c_chunk),
+                )
 
         # Build sets keyed by (pattern, kind) for comparison
-        baseline_set = {(p.pattern, p.kind) for p in baseline_patterns}
-        current_set = {(p.pattern, p.kind) for p in current_patterns}
+        baseline_set = {(p.pattern.strip(), p.kind) for p in b_patterns}
+        current_set = {(p.pattern.strip(), p.kind) for p in c_patterns}
 
-        # REMOVED: in baseline but not in current
         removed_keys = baseline_set - current_set
-        for p in baseline_patterns:
-            if (p.pattern, p.kind) in removed_keys:
+        for p in b_patterns:
+            if (p.pattern.strip(), p.kind) in removed_keys:
                 result.removed_from_baseline.append(p)
+                removed_keys.remove((p.pattern.strip(), p.kind))
 
-        # ADDED: in current but not in baseline
         added_keys = current_set - baseline_set
-        for p in current_patterns:
-            if (p.pattern, p.kind) in added_keys:
+        for p in c_patterns:
+            if (p.pattern.strip(), p.kind) in added_keys:
                 result.added_not_in_baseline.append(p)
+                added_keys.remove((p.pattern.strip(), p.kind))
 
-        # PRESERVED: in both
         preserved_keys = baseline_set & current_set
-        for p in baseline_patterns:
-            if (p.pattern, p.kind) in preserved_keys:
+        for p in b_patterns:
+            if (p.pattern.strip(), p.kind) in preserved_keys:
                 result.unchanged_baseline.append(p)
+                preserved_keys.remove((p.pattern.strip(), p.kind))
 
     logger.info(
         f"Baseline diff: {len(result.removed_from_baseline)} removed, "
@@ -342,7 +466,7 @@ def post_filter_findings(
         references_executor_added = False
         for added_pattern in only_added:
             # Match the class/annotation name in the finding message
-            # E.g., "HandlerMethodValidationException" from "@ExceptionHandler(HandlerMethodValidationException.class)"
+            # E.g., "HandlerMethodValidationException" from an @ExceptionHandler pattern.
             core_name = added_pattern
             if "(" in core_name:
                 inner = core_name.split("(", 1)[1].rstrip(")")
@@ -467,5 +591,3 @@ def _extract_identifiers_from_message(message: str) -> List[str]:
             result.append(ident)
 
     return result
-
-

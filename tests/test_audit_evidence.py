@@ -27,7 +27,7 @@ from codegate.store.artifact_store import ArtifactStore
 from codegate.workflow.state import GovernanceState
 
 
-def test_audit_evidence_persistence(output_dir: str) -> dict:
+def test_audit_evidence_persistence(tmp_path) -> None:
     """Test the full persistence chain for audit evidence.
 
     Simulates:
@@ -157,7 +157,7 @@ def test_audit_evidence_persistence(output_dir: str) -> dict:
     )
 
     # --- Step 5: Persist ---
-    store = ArtifactStore(base_dir=Path(output_dir))
+    store = ArtifactStore(base_dir=tmp_path)
     run_dir = store.save_run(state)
 
     # --- Step 6: Verify persisted files ---
@@ -230,9 +230,12 @@ def test_audit_evidence_persistence(output_dir: str) -> dict:
     result_path = run_dir / "audit_evidence_test_result.json"
     result_path.write_text(json.dumps(results, indent=2, ensure_ascii=False))
 
-    return results
+    assert all_ok, f"Audit evidence persistence failed: {results}"
 
 
 if __name__ == "__main__":
+    from pathlib import Path as _Path
     output_dir = sys.argv[1] if len(sys.argv) > 1 else "/tmp/codegate-audit-test"
-    test_audit_evidence_persistence(output_dir)
+    _p = _Path(output_dir)
+    _p.mkdir(parents=True, exist_ok=True)
+    test_audit_evidence_persistence(_p)

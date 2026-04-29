@@ -18,6 +18,7 @@ class ModelConfig:
     review_model: str = "deepseek/deepseek-chat"
     gate_model: str = "deepseek/deepseek-chat"
     eval_model: str = "deepseek/deepseek-chat"
+    extract_model: str | None = None
 
 
 @dataclass
@@ -44,6 +45,7 @@ class Config:
             review_model=os.getenv("CODEGATE_REVIEW_MODEL", "deepseek/deepseek-chat"),
             gate_model=os.getenv("CODEGATE_GATE_MODEL", "deepseek/deepseek-chat"),
             eval_model=os.getenv("CODEGATE_EVAL_MODEL", "deepseek/deepseek-chat"),
+            extract_model=os.getenv("CODEGATE_EXTRACT_MODEL"),
         )
 
         store_dir = Path(os.getenv("CODEGATE_STORE_DIR", "./artifacts"))

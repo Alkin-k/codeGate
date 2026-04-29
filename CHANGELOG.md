@@ -2,6 +2,47 @@
 
 All notable changes to CodeGate will be documented in this file.
 
+## [0.3.0] - 2026-04-29
+
+### Added
+
+- **V3 Security Gate benchmark**
+  - Added frozen benchmark report: `spec/benchmark-v3-security-gate-report.md`
+  - Added release notes: `spec/release-notes-v3-security-benchmark.md`
+  - Added reproducible frontend/client harness under `benchmarks/v2_frontend_client/`
+  - Added funding/application materials under `funding/`
+
+- **Security Policy Gate (SEC-1~5)**
+  - Added deterministic auth/routing rules for guard deletion, global guest bypass,
+    token weakening, scoped guest access, and protected route public exposure
+  - Merged security evidence into unified `policy_result.json`
+  - Added route context extraction for TypeScript/Vue route metadata
+
+- **Structural extractors**
+  - Added TypeScript/Vue extractor for router guards, auth conditions, route meta,
+    storage access, and imports
+  - Added Rust extractor for Tauri commands, function signatures, SQL pagination,
+    and imports
+
+- **LLM JSON robustness**
+  - Added JSON parse retry for malformed model output
+  - Persist malformed responses under `llm_parse_errors/`
+  - Added tests for direct parse, repaired parse, retry, artifact save, and failure paths
+
+### Changed
+
+- Bumped package version to `0.3.0`
+- Updated README to reflect V3 benchmark evidence, 11 policy rules, SEC-1~5,
+  and 122 passing tests
+- Added `test_results/` to `.gitignore` to avoid committing user-specific
+  benchmark artifacts and code snapshots
+
+### Verified
+
+- `pytest -q` — 122 passed
+- V3 SEC-5 verify summary — 2 PASS, 0 WARN, 0 FAIL
+- V3 full rerun summary — 5 PASS, 0 WARN, 0 FAIL
+
 ## [0.2.0] - 2026-04-27
 
 ### Added

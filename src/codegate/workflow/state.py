@@ -52,6 +52,7 @@ class GovernanceState(BaseModel):
     # === Policy Engine results (for evidence) ===
     policy_violations: List[str] = Field(default_factory=list)
     policy_result: Optional[Dict] = None  # Structured policy result for artifact persistence
+    security_policy_result: Optional[Dict] = None  # Security-specific policy result (SEC-1~5)
 
     # === Control flow ===
     current_phase: WorkflowStatus = WorkflowStatus.DRAFT

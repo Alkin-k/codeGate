@@ -5,9 +5,9 @@
 **The governance layer for AI coding agents.**
 **AI 编码代理的治理层。**
 
-[![Alpha v0.2](https://img.shields.io/badge/status-alpha%20v0.2-blue)]()
+[![Alpha v0.3](https://img.shields.io/badge/status-alpha%20v0.3-blue)]()
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)]()
+[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue)]()
 
 *AI agents write code fast — but they silently break things.*
 *CodeGate catches the changes that tests miss.*
@@ -49,7 +49,7 @@ Requirement
          ▼
 ┌─────────────────┐
 │  Gatekeeper      │ ← approve / revise_code / escalate_to_human
-│  (Policy Engine) │   8 deterministic rules with risk-aware thresholds
+│  (Policy Engine) │   11 deterministic rules + SEC-1~5 security gate
 └─────────────────┘
 ```
 
@@ -83,24 +83,25 @@ codegate ab --project /path/to/project --input "your requirement" \
 codegate ab-batch --cases eval_cases/image2pdf_cases.yaml
 ```
 
-## Evidence: Real Benchmark Results (V2.2)
+## Evidence: Real Benchmark Results (V3 Security Gate)
 
 > All numbers from actual benchmark runs — not estimates.
 
 | Metric | Value | What It Means |
 |--------|-------|---------------|
-| Governance overhead | **19.6s avg** | ~20s extra per AI task for behavioral safety |
-| False positives | **0 / 5 cases** | Zero noise — only real issues flagged |
-| Approval rate | **4/5 approve, 1 blocked** | Blocks only when contract conflict detected |
-| 5-case total cost | **$0.03 (¥0.22)** | Governance cost is negligible |
-| V1 → V2.2 speed | **↓ 84%** | Continuous self-improvement |
+| Governance overhead | **~16-22s** | Extra governance time for contract/security review |
+| False positives | **0 / 6 scenarios** | Safe scoped guest access is approved |
+| False negatives | **0 / 6 scenarios** | Unsafe guest/public route exposure is blocked |
+| Benchmark harness | **6 scenarios** | Reproducible T1-T6 frontend/client suite |
+| Test suite | **122 tests passing** | Unit, integration, policy, extractor, and LLM JSON robustness |
 
 ### What Got Caught
 
-In our 4-case real-project evaluation (image2pdf Java project):
+In the V3 frontend/client benchmark against a real Vue 3 + TypeScript + Tauri project:
 
-- ✅ **3 cases approved** — AI output matched the contract
-- 🔄 **1 case blocked** — AI silently removed `@Min(72)` annotation while adding validation; CodeGate caught the contract conflict and requested revision
+- ✅ **T5 constrained guest mode approved** — route-scoped `meta.guest` access with preserved token checks
+- ⚠️ **T6 unconstrained guest mode escalated** — protected workspace routes were exposed via `public: true`, caught by deterministic SEC-5 policy evidence
+- 🔄 **Rule 7 contract drift blocks** — assumed-default boundary issues are revised even when the LLM gatekeeper says approve
 
 ## Key Capabilities
 
@@ -110,12 +111,32 @@ In our 4-case real-project evaluation (image2pdf Java project):
 | Interactive requirement clarification (CLI) | ✅ |
 | Baseline-aware drift detection (3-layer) | ✅ |
 | Ghost pattern suppression (zero false positives) | ✅ |
-| Policy engine with 8 deterministic rules | ✅ |
+| Policy engine with 11 deterministic rules | ✅ |
+| Security gate for auth/routing risks (SEC-1~5) | ✅ |
+| TypeScript/Vue + Rust structural extractors | ✅ |
+| Reproducible V2 frontend/client benchmark harness | ✅ |
 | Risk-aware thresholds (low/medium/high) | ✅ |
 | Automated A/B evaluation (governed vs raw) | ✅ |
 | Batch evaluation with aggregate reporting | ✅ |
 | Auditor-ready evidence reports (7-section) | ✅ |
 | Full audit evidence persistence | ✅ |
+| LLM JSON retry + malformed response artifacts | ✅ |
+
+## Reproduce the V3 Benchmark
+
+```bash
+# Run all scenarios with Gemini CLI
+.venv/bin/python benchmarks/v2_frontend_client/run.py --executor gemini
+
+# Validate historical or freshly generated results
+.venv/bin/python benchmarks/v2_frontend_client/summarize.py \
+  test_results/v2_security_gate_sec5_verify_20260429
+```
+
+Read the frozen report:
+
+- [`spec/benchmark-v3-security-gate-report.md`](spec/benchmark-v3-security-gate-report.md)
+- [`spec/release-notes-v3-security-benchmark.md`](spec/release-notes-v3-security-benchmark.md)
 
 ## Evidence Reports
 
@@ -134,10 +155,10 @@ Each governance run produces a complete audit trail:
 ```
 src/codegate/
 ├── agents/          # LLM agents: spec_council, executor, reviewer, gatekeeper
-├── adapters/        # Executor adapters (OpenCode)
-├── analysis/        # Structural pre-check (baseline diff)
+├── adapters/        # Executor adapters (OpenCode, Gemini CLI)
+├── analysis/        # Baseline diff + TS/Vue/Rust structural extractors
 ├── eval/            # A/B runner + batch runner
-├── policies/        # Policy engine (8 deterministic rules)
+├── policies/        # Policy engine + Security gate (SEC-1~5)
 ├── prompts/         # LLM prompt templates
 ├── schemas/         # Pydantic models (contract, review, gate, execution)
 ├── store/           # Artifact persistence
@@ -146,6 +167,8 @@ src/codegate/
 └── config.py        # Configuration
 
 docs/                # Team-facing documentation
+benchmarks/          # Reproducible benchmark harness
+funding/             # Grant/resource application materials
 eval_cases/          # A/B evaluation case definitions (YAML)
 spec/                # Technical reports and benchmark results
 ADR/                 # Architecture Decision Records
@@ -164,10 +187,11 @@ Quick path:
 
 ## Honest Limitations
 
-- **Alpha stage** — not production-ready, API may change
+- **Alpha v0.3** — not production-ready, API may change
 - **Executor support** — currently OpenCode and Gemini CLI (Cursor/Windsurf adapters planned)
 - **LLM non-determinism** — each run may produce slightly different results
 - **Governance overhead** — ~20s per task (the price of behavioral safety)
+- **Policy loop integration** — policy override currently runs after the LangGraph loop in CLI, so policy-induced revise decisions do not yet auto-trigger another executor iteration
 
 ## License
 

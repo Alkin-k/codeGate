@@ -13,15 +13,16 @@ Rule inventory:
   Rule 6: Never approve with unresolved items
   Rule 7: Findings referencing assumed_defaults at P0/P1 block approve
   Rule 8: Risk-level-aware enforcement (high-risk = stricter thresholds)
+  Rule 9: Validation test failure blocks approve
+  Rule 10: Missing test script is a warning (not a violation)
+  Rule 11: Security Policy Gate (SEC-1~5 auth/routing risk detection)
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Literal
 
-from codegate.schemas.gate import GateDecision
-from codegate.schemas.review import ReviewFinding
+from codegate.schemas.work_item import WorkflowStatus
 from codegate.workflow.state import GovernanceState
 
 logger = logging.getLogger(__name__)
@@ -154,6 +155,65 @@ def evaluate_policies(state: GovernanceState) -> PolicyResult:
             )
             result.override_decision = "escalate_to_human"
 
+    # Rule 9: Validation test failure blocks approve
+    #   Distinguish "tests ran and failed" from "no test script" from
+    #   "build/dependency/runner failure".
+    if decision.decision == "approve" and state.execution_report:
+        vr = state.execution_report.validation_result
+        if vr is not None and not vr.passed:
+            if vr.tests_run > 0 and vr.tests_failed > 0:
+                # Case A: Tests ran and some failed → block
+                result.violations.append(
+                    f"Cannot approve: {vr.tests_failed}/{vr.tests_run} tests failed "
+                    f"(command: {vr.command}, exit_code: {vr.exit_code})"
+                )
+                result.override_decision = "revise_code"
+            elif vr.tests_run == 0 and _is_missing_test_script(vr):
+                # Rule 10: Genuinely missing test script → warning only.
+                # Identified by explicit npm/yarn error signatures.
+                error_hint = vr.error_summary or "no test script found"
+                result.warnings.append(
+                    f"Validation: no test script configured "
+                    f"({error_hint}). Not blocking approval."
+                )
+            else:
+                # Case B: tests_run==0 but NOT a missing-script case, or
+                # any other unrecognized failure → block as validation_failure.
+                # Covers: build errors, syntax errors, dependency issues,
+                # test runner crashes, etc.
+                error_hint = vr.error_summary or f"exit_code={vr.exit_code}"
+                result.violations.append(
+                    f"Cannot approve: validation failed ({vr.command}: {error_hint})"
+                )
+                result.override_decision = "revise_code"
+
+    # Rule 11: Security Policy Gate (SEC-1~5)
+    # Consumes structural_diff facts to detect auth/routing risks.
+    if state.structural_diff:
+        from codegate.policies.security import evaluate_security_policies
+
+        files_content = (
+            state.execution_report.files_content
+            if state.execution_report
+            else None
+        )
+        sec_result = evaluate_security_policies(
+            state.structural_diff, files_content
+        )
+        if sec_result.security_violations:
+            for v in sec_result.security_violations:
+                result.violations.append(f"[SECURITY] {v}")
+            # Security policy may escalate; use its decision if stronger
+            if sec_result.override_decision == "escalate_to_human":
+                result.override_decision = "escalate_to_human"
+            elif result.override_decision is None:
+                result.override_decision = sec_result.override_decision or "revise_code"
+        result.warnings.extend(
+            f"[SECURITY] {w}" for w in sec_result.security_warnings
+        )
+        # Store security result for merging into policy_result
+        result._security_result = sec_result  # type: ignore[attr-defined]
+
     if result.violations:
         logger.warning(
             f"Policy violations: {result.violations}, "
@@ -163,12 +223,75 @@ def evaluate_policies(state: GovernanceState) -> PolicyResult:
     return result
 
 
+# Known error signatures for "no test script configured" in JS package managers.
+# Only these patterns trigger the Rule 10 warning-only path.
+_MISSING_SCRIPT_SIGNATURES = [
+    # npm / yarn
+    "missing script: \"test\"",
+    "missing script: 'test'",
+    "no test specified",
+    "error: missing script: test",
+]
+
+
+def _is_missing_test_script(vr) -> bool:
+    """Check if a validation failure is specifically due to a missing test script.
+
+    Returns True ONLY when the error output contains a known signature
+    indicating the project simply has no test script configured.
+    Returns False for all other failures (build errors, dependency issues,
+    syntax errors, runner crashes, etc.) so they are treated as real failures.
+    """
+    search_text = ""
+    if vr.error_summary:
+        search_text += vr.error_summary.lower()
+    if vr.stdout_tail:
+        search_text += " " + vr.stdout_tail.lower()
+
+    if not search_text.strip():
+        return False
+
+    return any(sig in search_text for sig in _MISSING_SCRIPT_SIGNATURES)
+
+
 def apply_policy_override(state: GovernanceState) -> GovernanceState:
-    """Apply policy engine results, potentially overriding the LLM decision."""
+    """Apply policy engine results, potentially overriding the LLM decision.
+
+    Writes structured audit evidence to state.policy_violations and
+    state.policy_result, and syncs work_item.status to match the
+    overridden decision.
+    """
     policy_result = evaluate_policies(state)
 
+    original = state.gate_decision.decision if state.gate_decision else "none"
+
+    # Always persist policy evaluation results for audit trail,
+    # even when no violations occurred (proves the check ran).
+    state.policy_violations = policy_result.violations
+    policy_dict = {
+        "gatekeeper_original_decision": original,
+        "violations": policy_result.violations,
+        "warnings": policy_result.warnings,
+        "override_decision": policy_result.override_decision,
+        "has_violations": policy_result.has_violations,
+    }
+
+    # Merge security policy results into unified policy_result
+    sec_result = getattr(policy_result, "_security_result", None)
+    if sec_result is not None:
+        policy_dict["security"] = sec_result.to_dict()
+        state.security_policy_result = sec_result.to_dict()
+    else:
+        policy_dict["security"] = {
+            "security_violations": [],
+            "security_warnings": [],
+            "override_decision": None,
+            "rule_triggers": [],
+        }
+
+    state.policy_result = policy_dict
+
     if policy_result.has_violations and policy_result.override_decision:
-        original = state.gate_decision.decision if state.gate_decision else "none"
         logger.warning(
             f"Policy override: {original} → {policy_result.override_decision}"
         )
@@ -181,5 +304,18 @@ def apply_policy_override(state: GovernanceState) -> GovernanceState:
             )
             if policy_result.override_decision == "escalate_to_human":
                 state.gate_decision.requires_human = True
+
+            # Sync work_item.status to match the overridden decision.
+            # Without this, final_status and decision diverge in artifacts.
+            status_map = {
+                "approve": WorkflowStatus.APPROVED,
+                "revise_code": WorkflowStatus.REVISE_CODE,
+                "revise_spec": WorkflowStatus.REVISE_SPEC,
+                "escalate_to_human": WorkflowStatus.ESCALATED,
+            }
+            new_status = status_map.get(
+                policy_result.override_decision, WorkflowStatus.ESCALATED
+            )
+            state.work_item.transition_to(new_status)
 
     return state

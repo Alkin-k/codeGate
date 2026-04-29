@@ -151,6 +151,25 @@ class ArtifactStore:
             ),
             "raw_findings_count": len(state.raw_review_findings),
             "suppressed_findings_count": len(state.suppressed_findings),
+            "validation_passed": (
+                state.execution_report.validation_result.passed
+                if state.execution_report
+                and state.execution_report.validation_result
+                else None
+            ),
+            "validation_tests_run": (
+                state.execution_report.validation_result.tests_run
+                if state.execution_report
+                and state.execution_report.validation_result
+                else 0
+            ),
+            "validation_command": (
+                state.execution_report.validation_result.command
+                if state.execution_report
+                and state.execution_report.validation_result
+                else None
+            ),
+            "policy_violations": state.policy_violations,
             "clarification_rounds": state.clarification_round,
             "clarification_questions": state.clarification_questions,
             "clarification_answers": state.clarification_answers,
