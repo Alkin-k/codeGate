@@ -113,7 +113,7 @@ def run(
         "builtin_llm",
         "--executor",
         "-e",
-        help="Executor adapter: builtin_llm, opencode, gemini",
+        help="Executor adapter: builtin_llm, opencode, gemini, codex",
     ),
     executor_model: str = typer.Option(
         "",
@@ -123,7 +123,7 @@ def run(
     project_dir: str = typer.Option(
         "",
         "--project-dir",
-        help="Project directory for real executors (opencode)",
+        help="Project directory for real executors (opencode, gemini, codex)",
     ),
     timeout: int = typer.Option(
         600,
@@ -166,6 +166,16 @@ def run(
         )
         set_executor_adapter(adapter)
         console.print(f"[green]Using gemini executor[/green] (model={executor_model or 'default'}, timeout={timeout}s)")
+    elif executor == "codex":
+        from codegate.adapters.codex import CodexCLIAdapter
+        from codegate.agents.executor import set_executor_adapter
+        adapter = CodexCLIAdapter(
+            model=executor_model,
+            timeout=timeout,
+            project_dir=project_dir if project_dir else None,
+        )
+        set_executor_adapter(adapter)
+        console.print(f"[green]Using codex executor[/green] (model={executor_model or 'default'}, timeout={timeout}s)")
 
     # Parse pre-provided answers
     clarification_answers = []
@@ -177,7 +187,6 @@ def run(
 
     # Import here to avoid circular imports and slow startup
     from codegate.workflow.graph import run_governance_pipeline
-    from codegate.policies.engine import apply_policy_override
     from codegate.store.artifact_store import ArtifactStore
 
     with console.status("[bold green]Running Spec Council (phase 1)..."):
@@ -265,8 +274,8 @@ def run(
                 console.print(f"[red]Error: {state.error}[/red]")
             raise typer.Exit(1)
 
-    # Apply policy override
-    state = apply_policy_override(state)
+    # Policy check is now integrated into the governance pipeline graph
+    # (as the policy_check node), so state already contains policy_result.
 
     # Save artifacts
     store = ArtifactStore()

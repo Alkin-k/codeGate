@@ -65,7 +65,6 @@ def run_scenario(
     output_dir: Path,
 ) -> dict:
     """Run a single scenario through the governance pipeline."""
-    from codegate.policies.engine import apply_policy_override
     from codegate.store.artifact_store import ArtifactStore
     from codegate.workflow.graph import run_governance_pipeline
 
@@ -85,8 +84,7 @@ def run_scenario(
             risk_level=scenario.get("risk_level", "medium"),
         )
 
-        # Apply policy override
-        state = apply_policy_override(state)
+        # Policy check runs inside the pipeline graph (policy_check node)
 
         elapsed = time.time() - start_time
 

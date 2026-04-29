@@ -265,6 +265,20 @@ def apply_policy_override(state: GovernanceState) -> GovernanceState:
 
     original = state.gate_decision.decision if state.gate_decision else "none"
 
+    if (
+        state.gate_decision
+        and policy_result.has_violations
+        and policy_result.override_decision in ("revise_code", "revise_spec")
+        and original not in ("revise_code", "revise_spec")
+    ):
+        state.iteration += 1
+        state.gate_decision.iteration = state.iteration
+        if state.iteration >= state.max_iterations:
+            policy_result.violations.append(
+                f"Max iterations ({state.max_iterations}) reached without approval"
+            )
+            policy_result.override_decision = "escalate_to_human"
+
     # Always persist policy evaluation results for audit trail,
     # even when no violations occurred (proves the check ran).
     state.policy_violations = policy_result.violations

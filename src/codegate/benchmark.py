@@ -328,9 +328,8 @@ def run_governance_with_metrics(case: BenchmarkCase) -> tuple[GovernanceMetrics,
             risk_level=case.risk_level,
         )
 
-        # Apply policy override
-        from codegate.policies.engine import apply_policy_override
-        state = apply_policy_override(state)
+        # Policy check is now integrated into the governance pipeline graph
+        # (as the policy_check node), so state already contains policy_result.
 
         metrics.total_time = time.time() - start_time
 

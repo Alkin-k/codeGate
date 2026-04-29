@@ -1,9 +1,13 @@
 """LangGraph workflow — the governance state machine.
 
-Defines the 4-node pipeline:
-  spec_council → executor → review_gate → gatekeeper
+Defines the 5-node pipeline:
+  spec_council → executor → reviewer → gatekeeper → policy_check
 
 With conditional routing for revisions and escalation.
+The policy_check node runs the deterministic Policy Engine (Rule 1-11
++ SEC-1~5) and can override the gatekeeper's decision. If the policy
+overrides to revise_code and iterations remain, the loop continues
+back to the executor with policy violations included in feedback.
 """
 
 from __future__ import annotations
@@ -50,14 +54,30 @@ def _route_after_spec(state: GovernanceState) -> str:
     return "end"
 
 
-def _route_after_gate(
+def run_policy_check(state: GovernanceState) -> GovernanceState:
+    """Policy Check node — runs deterministic policy rules after gatekeeper.
+
+    This node applies the Policy Engine (Rule 1-11 + SEC-1~5) which can
+    override the gatekeeper's LLM-based decision. The override is written
+    into state.gate_decision, state.policy_violations, and state.policy_result
+    so downstream routing and artifact persistence see the final decision.
+    """
+    from codegate.policies.engine import apply_policy_override
+    return apply_policy_override(state)
+
+
+def _route_after_policy(
     state: GovernanceState,
 ) -> str:
-    """Route after Gatekeeper decision.
+    """Route after Policy Check.
+
+    This is the final routing decision in the governance loop.
+    If policy overrides to revise_code and iterations remain,
+    the loop sends the state back to the executor with policy
+    violations included in the feedback.
 
     IMPORTANT: Do NOT mutate state here — LangGraph conditional edge
-    functions are read-only routers. Iteration is incremented in the
-    gatekeeper node itself.
+    functions are read-only routers.
     """
     if state.error:
         return "end"
@@ -82,9 +102,13 @@ def build_governance_graph() -> StateGraph:
     """Build the LangGraph state machine for the governance pipeline.
 
     Flow:
-        START → spec_council → executor → reviewer → gatekeeper → END
-                                  ↑                       │
-                                  └───── revise_code ──────┘
+        START → spec_council → executor → reviewer → gatekeeper → policy_check → END
+                                  ↑                                     │
+                                  └────────── revise_code ──────────────┘
+
+    The policy_check node is the final arbiter. It can override the
+    gatekeeper's decision (e.g., approve → revise_code due to Rule 7)
+    and route back to the executor with policy violations in feedback.
     """
     graph = StateGraph(GovernanceState)
 
@@ -93,6 +117,7 @@ def build_governance_graph() -> StateGraph:
     graph.add_node("executor", _timed_node("executor", run_executor))
     graph.add_node("reviewer", _timed_node("reviewer", run_reviewer))
     graph.add_node("gatekeeper", _timed_node("gatekeeper", run_gatekeeper))
+    graph.add_node("policy_check", _timed_node("policy", run_policy_check))
 
     # Define edges
     graph.add_edge(START, "spec_council")
@@ -103,9 +128,10 @@ def build_governance_graph() -> StateGraph:
     )
     graph.add_edge("executor", "reviewer")
     graph.add_edge("reviewer", "gatekeeper")
+    graph.add_edge("gatekeeper", "policy_check")  # Always run policy after gate
     graph.add_conditional_edges(
-        "gatekeeper",
-        _route_after_gate,
+        "policy_check",
+        _route_after_policy,
         {"executor": "executor", "end": END},
     )
 

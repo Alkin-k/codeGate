@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from codegate.policies.engine import evaluate_policies
+from codegate.policies.engine import apply_policy_override, evaluate_policies
 from codegate.schemas.execution import ExecutionReport, ValidationResult
 from codegate.schemas.gate import GateDecision
 from codegate.schemas.work_item import WorkItem
@@ -106,3 +106,49 @@ def test_real_test_failure_blocks_approval() -> None:
     assert result.override_decision == "revise_code"
     assert result.violations
     assert "1/12 tests failed" in result.violations[0]
+
+
+def test_policy_override_revise_consumes_iteration() -> None:
+    state = _state_with_validation(
+        ValidationResult(
+            type="npm",
+            command="npm test",
+            exit_code=1,
+            passed=False,
+            tests_run=12,
+            tests_failed=1,
+            error_summary="1 failed",
+        )
+    )
+
+    state = apply_policy_override(state)
+
+    assert state.gate_decision is not None
+    assert state.gate_decision.decision == "revise_code"
+    assert state.iteration == 2
+    assert state.gate_decision.iteration == 2
+
+
+def test_policy_override_revise_escalates_at_max_iterations() -> None:
+    state = _state_with_validation(
+        ValidationResult(
+            type="npm",
+            command="npm test",
+            exit_code=1,
+            passed=False,
+            tests_run=12,
+            tests_failed=1,
+            error_summary="1 failed",
+        )
+    )
+    state.max_iterations = 2
+
+    state = apply_policy_override(state)
+
+    assert state.gate_decision is not None
+    assert state.gate_decision.decision == "escalate_to_human"
+    assert state.gate_decision.requires_human is True
+    assert state.iteration == 2
+    assert state.policy_result is not None
+    assert state.policy_result["override_decision"] == "escalate_to_human"
+    assert any("Max iterations" in v for v in state.policy_result["violations"])

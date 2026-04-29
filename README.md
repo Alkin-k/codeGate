@@ -39,7 +39,7 @@ Requirement
 ┌─────────────────┐
 │  Executor        │ ← Passes contract to any AI coding agent
 │  (OpenCode /     │
-│   Gemini CLI)    │
+│   Gemini/Codex)  │
 └────────┬────────┘
          ▼
 ┌─────────────────┐
@@ -48,8 +48,12 @@ Requirement
 └────────┬────────┘
          ▼
 ┌─────────────────┐
-│  Gatekeeper      │ ← approve / revise_code / escalate_to_human
-│  (Policy Engine) │   11 deterministic rules + SEC-1~5 security gate
+│  Gatekeeper      │ ← LLM decision
+└────────┬────────┘
+         ▼
+┌─────────────────┐
+│  Policy Check    │ ← final approve / revise_code / escalate_to_human
+│  (Rule 1-11)     │   deterministic rules + SEC-1~5 security gate
 └─────────────────┘
 ```
 
@@ -70,6 +74,10 @@ codegate run --input "add filename validation to /api/convert" \
 # Run governance pipeline — Gemini CLI executor
 codegate run --input "add filename validation" \
   --executor gemini --project-dir /path/to/project
+
+# Run governance pipeline — Codex CLI executor
+codegate run --input "add filename validation" \
+  --executor codex --project-dir /path/to/project
 
 # Run governance pipeline (non-interactive, pre-provided answers)
 codegate run --input "add filename validation" \
@@ -93,7 +101,7 @@ codegate ab-batch --cases eval_cases/image2pdf_cases.yaml
 | False positives | **0 / 6 scenarios** | Safe scoped guest access is approved |
 | False negatives | **0 / 6 scenarios** | Unsafe guest/public route exposure is blocked |
 | Benchmark harness | **6 scenarios** | Reproducible T1-T6 frontend/client suite |
-| Test suite | **122 tests passing** | Unit, integration, policy, extractor, and LLM JSON robustness |
+| Test suite | **142 tests passing** | Unit, integration, policy, extractor, Codex adapter, and LLM JSON robustness |
 
 ### What Got Caught
 
@@ -188,10 +196,10 @@ Quick path:
 ## Honest Limitations
 
 - **Alpha v0.3** — not production-ready, API may change
-- **Executor support** — currently OpenCode and Gemini CLI (Cursor/Windsurf adapters planned)
+- **Executor support** — OpenCode, Gemini CLI, and Codex CLI (Cursor/Windsurf adapters planned)
 - **LLM non-determinism** — each run may produce slightly different results
 - **Governance overhead** — ~20s per task (the price of behavioral safety)
-- **Policy loop integration** — policy override currently runs after the LangGraph loop in CLI, so policy-induced revise decisions do not yet auto-trigger another executor iteration
+- **Security rules** — SEC-1~5 cover frontend auth/routing only (backend rules planned for v0.4)
 
 ## License
 

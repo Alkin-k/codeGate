@@ -72,6 +72,18 @@ def run_executor(state: GovernanceState) -> GovernanceState:
         if gd.next_action:
             feedback += f"- **What to do next**: {gd.next_action}\n"
 
+    # Include deterministic policy violations if available.
+    # These come from the Policy Engine (Rule 1-11 + SEC-1~5)
+    # and tell the executor exactly which hard rules were violated.
+    if state.policy_violations:
+        feedback += "\n## Policy violations (MUST address):\n"
+        feedback += (
+            "The following deterministic policy rules were violated. "
+            "These are NOT suggestions — they are hard requirements.\n"
+        )
+        for v in state.policy_violations:
+            feedback += f"- ❌ {v}\n"
+
     try:
         report = _adapter.execute(
             contract=state.contract,
