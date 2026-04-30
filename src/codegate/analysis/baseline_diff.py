@@ -95,6 +95,50 @@ class BaselineDiffResult:
 
 
 # ---------------------------------------------------------------------------
+# Comment stripping utilities
+# ---------------------------------------------------------------------------
+
+
+def _strip_java_comments(content: str) -> str:
+    """Replace Java/TS comments with whitespace to preserve line numbers.
+
+    Handles // line comments and /* */ block comments.
+    Replaces non-newline characters with spaces so that line_number
+    calculations based on newline counting remain correct.
+    """
+    # Strip // line comments
+    content = re.sub(r'//[^\n]*', lambda m: ' ' * len(m.group()), content)
+    # Strip /* */ block comments (preserve newlines)
+    content = re.sub(
+        r'/\*.*?\*/',
+        lambda m: re.sub(r'[^\n]', ' ', m.group()),
+        content,
+        flags=re.DOTALL,
+    )
+    return content
+
+
+def _strip_python_comments(content: str) -> str:
+    """Replace Python # comments and docstrings with whitespace.
+
+    Preserves line numbers by keeping newlines intact.
+    Strips:
+      - # line comments
+      - Triple-quoted docstrings (\"\"\"...\"\"\" and '''...''')
+    """
+    # Strip triple-quoted docstrings first (before # comments)
+    content = re.sub(
+        r'(\'\'\'|\"\"\")(.*?)\1',
+        lambda m: re.sub(r'[^\n]', ' ', m.group()),
+        content,
+        flags=re.DOTALL,
+    )
+    # Strip # line comments
+    content = re.sub(r'#[^\n]*', lambda m: ' ' * len(m.group()), content)
+    return content
+
+
+# ---------------------------------------------------------------------------
 # Pattern extractors (language-aware, regex-based)
 # ---------------------------------------------------------------------------
 
@@ -121,6 +165,37 @@ _JAVA_METHOD_SIG_RE = re.compile(
     r"([\w<>\[\],\s?]+?)\s+"                       # return type
     r"(\w+)\s*\(",                                 # method name
     re.MULTILINE,
+)
+
+# --- Java security patterns (v0.4) ---
+
+# Auth boundary annotations: @PreAuthorize, @Secured, @RolesAllowed, @DenyAll, @PermitAll
+_JAVA_AUTH_ANNOTATION_RE = re.compile(
+    r"@(PreAuthorize|Secured|RolesAllowed|DenyAll|PermitAll)"
+    r"(\([^)]*\))?",
+    re.MULTILINE,
+)
+
+# Spring Security config chains: .hasRole(), .hasAuthority(), .authenticated(), .permitAll()
+_JAVA_SECURITY_CONFIG_RE = re.compile(
+    r"\.(authorizeRequests|authorizeHttpRequests|antMatchers|requestMatchers|"
+    r"hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|authenticated|permitAll|denyAll)"
+    r"\s*\([^)]*\)",
+    re.MULTILINE,
+)
+
+# Principal / Authentication / @AuthenticationPrincipal parameter
+_JAVA_AUTH_PARAM_RE = re.compile(
+    r"(?:Principal|Authentication|@AuthenticationPrincipal|@CurrentUser)\s+\w+",
+    re.MULTILINE,
+)
+
+# Tenant-scoped repository methods: findByTenantId, findBy*AndTenantId, findBy*AndOrgId
+_JAVA_TENANT_SCOPE_RE = re.compile(
+    r"\b(findBy(?:TenantId|OrgId|OrganizationId|UserId)"
+    r"|findBy\w*(?:AndTenantId|AndOrgId|AndOrganizationId|AndUserId))"
+    r"|(?:tenant_id|org_id|organization_id|user_id)\s*=\s*:\w+",
+    re.MULTILINE | re.IGNORECASE,
 )
 
 # Python decorator patterns
@@ -150,6 +225,12 @@ def _extract_patterns_regex_fallback(filepath: str, content: str) -> List[Patter
         patterns.extend(_extract_java_patterns(filepath, content, lines))
     elif ext == "py":
         patterns.extend(_extract_python_patterns(filepath, content, lines))
+        from codegate.analysis.structural_extractors.python import (
+            extract_python_security_patterns,
+        )
+        # Strip Python comments/docstrings before security extraction
+        sec_content_py = _strip_python_comments(content)
+        patterns.extend(extract_python_security_patterns(filepath, sec_content_py))
     elif ext in ("ts", "tsx", "vue"):
         from codegate.analysis.structural_extractors.typescript import (
             extract_typescript_patterns,
@@ -171,7 +252,17 @@ def _extract_patterns_regex_fallback(filepath: str, content: str) -> List[Patter
 def _extract_java_patterns(
     filepath: str, content: str, lines: List[str]
 ) -> List[PatternMatch]:
-    """Extract Java-specific patterns."""
+    """Extract Java-specific patterns.
+
+    Covers both structural patterns (v0.1+) and security patterns (v0.4+):
+      - Validation annotations: @NotNull, @Valid, etc.
+      - Exception handlers: @ExceptionHandler
+      - Method signatures: public/protected/private methods
+      - Auth boundary: @PreAuthorize, @Secured, @RolesAllowed, @DenyAll, @PermitAll
+      - Auth params: Principal, Authentication, @AuthenticationPrincipal
+      - Tenant scope: findBy*AndTenantId, tenant_id in queries
+      - Security config: .hasRole(), .authenticated(), .permitAll()
+    """
     patterns: List[PatternMatch] = []
 
     # 1. Validation annotations
@@ -212,6 +303,69 @@ def _extract_java_patterns(
             file=filepath,
             pattern=sig,
             kind="method_signature",
+            line_number=line_num,
+            context=context_line,
+        ))
+
+    # --- v0.4: Security patterns ---
+    # Strip comments to avoid false matches on commented-out code
+    sec_content = _strip_java_comments(content)
+
+    # 4. Auth boundary annotations (@PreAuthorize, @Secured, etc.)
+    for m in _JAVA_AUTH_ANNOTATION_RE.finditer(sec_content):
+        line_num = sec_content[:m.start()].count("\n") + 1
+        full_match = m.group(0)
+        context_line = lines[line_num - 1] if line_num <= len(lines) else ""
+        # Determine kind:
+        # - @PermitAll is authorization_check (always-allow) so SEC-7c can detect it
+        # - @DenyAll is authorization_check (always-deny)
+        # - @Secured/@RolesAllowed are authorization_check (role-based)
+        # - @PreAuthorize is auth_boundary (general auth enforcement)
+        ann_name = m.group(1)
+        if ann_name in ("PermitAll", "DenyAll", "Secured", "RolesAllowed"):
+            kind = "authorization_check"
+        else:  # PreAuthorize
+            kind = "auth_boundary"
+        patterns.append(PatternMatch(
+            file=filepath,
+            pattern=full_match,
+            kind=kind,
+            line_number=line_num,
+            context=context_line,
+        ))
+
+    # 5. Principal / Authentication parameters in method signatures
+    for m in _JAVA_AUTH_PARAM_RE.finditer(sec_content):
+        line_num = sec_content[:m.start()].count("\n") + 1
+        context_line = lines[line_num - 1] if line_num <= len(lines) else ""
+        patterns.append(PatternMatch(
+            file=filepath,
+            pattern=m.group(0).strip(),
+            kind="auth_boundary",
+            line_number=line_num,
+            context=context_line,
+        ))
+
+    # 6. Tenant-scoped repository queries
+    for m in _JAVA_TENANT_SCOPE_RE.finditer(sec_content):
+        line_num = sec_content[:m.start()].count("\n") + 1
+        context_line = lines[line_num - 1] if line_num <= len(lines) else ""
+        patterns.append(PatternMatch(
+            file=filepath,
+            pattern=m.group(0).strip(),
+            kind="tenant_scope",
+            line_number=line_num,
+            context=context_line,
+        ))
+
+    # 7. Spring Security config chains
+    for m in _JAVA_SECURITY_CONFIG_RE.finditer(sec_content):
+        line_num = sec_content[:m.start()].count("\n") + 1
+        context_line = lines[line_num - 1] if line_num <= len(lines) else ""
+        patterns.append(PatternMatch(
+            file=filepath,
+            pattern=m.group(0).strip(),
+            kind="security_config",
             line_number=line_num,
             context=context_line,
         ))

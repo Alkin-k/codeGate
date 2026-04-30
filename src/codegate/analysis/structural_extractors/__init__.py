@@ -15,8 +15,12 @@ from codegate.analysis.structural_extractors.typescript import (
 from codegate.analysis.structural_extractors.rust import (
     extract_rust_patterns,
 )
+from codegate.analysis.structural_extractors.python import (
+    extract_python_security_patterns,
+)
 
 __all__ = [
     "extract_typescript_patterns",
     "extract_rust_patterns",
+    "extract_python_security_patterns",
 ]

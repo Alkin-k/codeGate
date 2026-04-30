@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import logging
 import os
+import shlex
+import shutil
 import subprocess
 import time
 from typing import Optional
@@ -71,7 +73,7 @@ class CodexCLIAdapter(ExecutorAdapter):
         """
         self._model = model
         self._timeout = timeout
-        self._codex_bin = codex_bin
+        self._codex_bin = self._resolve_codex_bin(codex_bin)
         self._project_dir = project_dir
         self._approval_mode = approval_mode
 
@@ -217,6 +219,63 @@ class CodexCLIAdapter(ExecutorAdapter):
         if self._project_dir:
             return self._project_dir
         return os.getcwd()
+
+    @classmethod
+    def _resolve_codex_bin(cls, codex_bin: str) -> str:
+        """Resolve the default codex binary while skipping broken shims.
+
+        Some local installations can leave an older Homebrew shim first on PATH
+        with a shebang that points at a deleted Node runtime. subprocess would
+        try that shim first and fail before reaching a healthy npm/nvm install.
+        """
+        if codex_bin != "codex" or os.path.sep in codex_bin:
+            return codex_bin
+
+        seen: set[str] = set()
+        for path_dir in os.environ.get("PATH", "").split(os.pathsep):
+            if not path_dir:
+                continue
+            candidate = os.path.join(path_dir, codex_bin)
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            if not os.path.isfile(candidate) or not os.access(candidate, os.X_OK):
+                continue
+            if cls._has_usable_shebang(candidate):
+                return candidate
+
+        return codex_bin
+
+    @staticmethod
+    def _has_usable_shebang(path: str) -> bool:
+        """Return False for scripts whose shebang interpreter is missing."""
+        try:
+            with open(path, "rb") as f:
+                first_line = f.readline(256)
+        except OSError:
+            return False
+
+        if not first_line.startswith(b"#!"):
+            return True
+
+        try:
+            shebang = first_line[2:].decode("utf-8", errors="ignore").strip()
+        except UnicodeDecodeError:
+            return True
+
+        if not shebang:
+            return False
+
+        parts = shlex.split(shebang)
+        if not parts:
+            return False
+
+        interpreter = parts[0]
+        if os.path.basename(interpreter) == "env" and len(parts) > 1:
+            return shutil.which(parts[1]) is not None
+        if os.path.isabs(interpreter):
+            return os.path.exists(interpreter) and os.access(interpreter, os.X_OK)
+        return True
 
     def _run_codex(self, prompt: str, work_dir: str) -> str:
         """Call codex CLI in headless mode and return raw stdout.

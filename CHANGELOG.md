@@ -2,6 +2,60 @@
 
 All notable changes to CodeGate will be documented in this file.
 
+## [0.4.0] - 2026-04-30
+
+### Added
+
+- **Backend/API Security Gate (SEC-6~10)**
+  - SEC-6: Auth boundary removal — detects deleted auth decorators,
+    middleware, Depends(), @PreAuthorize, @Secured, @RolesAllowed
+  - SEC-7: Authorization check weakening — 3-tier detection:
+    deletion (revise), changed (warning), always-allow (escalate)
+  - SEC-8: Tenant/org scope removal — detects deleted tenant_id/org_id
+    query filters, Depends(get_tenant), findByTenantId
+  - SEC-9: User-controlled privilege trust — detects req.body.role,
+    data['is_admin'], request.json.get('userId') used for authorization
+  - SEC-10: Security config relaxation — detects CORS origin: '*',
+    cookie secure: false, httpOnly: false, sameSite: 'none'
+
+- **Python/FastAPI Security Extractor**
+  - New `structural_extractors/python.py` for Python backend patterns
+  - Detects: Depends(get_current_user), @login_required, ORM tenant
+    filters, user-controlled privilege, CORS/CSRF/cookie config
+
+- **Java/Spring Security Extractor Extension**
+  - Extended `_extract_java_patterns()` with security annotations
+  - Detects: @PreAuthorize, @Secured, @RolesAllowed, @DenyAll, @PermitAll
+  - Detects: Principal/Authentication params, findByTenantId queries
+  - Detects: Spring Security config chains (.hasRole, .authenticated)
+
+- **TypeScript Backend Mode**
+  - Added `_is_likely_backend_ts()` heuristic (path + import detection)
+  - Express/NestJS/Fastify/Hono pattern extraction
+  - Detects: auth middleware, req.user, CORS config, cookie config,
+    JWT verify, user-controlled privilege, tenant scope
+  - Zero regression on v0.3 frontend TS/Vue patterns
+
+- **Backend Security Demo Fixture**
+  - Added `benchmarks/fixtures/backend_security_demo/` with 6 scenarios
+  - T7-T12: auth preserved/removed, tenant preserved/removed,
+    role trusted, config relaxed
+  - `run_demo.py` — zero-LLM, no API keys, clone-and-run
+  - All 3 languages: Python/FastAPI, Java/Spring, Node/Express
+
+### Changed
+
+- Bumped package version to `0.4.0`
+- Security policy module docstring updated for SEC-6~10
+- `structural_extractors/__init__.py` exports Python extractor
+
+### Verified
+
+- `pytest -q` — **201 passed** (was 142 in v0.3)
+- Backend Security Demo — T7-T12 all PASS across 3 languages
+- v0.3 Security Gate Demo — T5 approve, T6 revise_code (regression-safe)
+- v0.3 full regression — all 142 original tests pass
+
 ## [0.3.0] - 2026-04-29
 
 ### Added

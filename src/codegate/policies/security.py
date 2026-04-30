@@ -1,7 +1,8 @@
-"""Security Policy Gate — auth/routing risk detection for frontend code changes.
+"""Security Policy Gate — auth/routing/API risk detection.
 
-Consumes structural_diff facts (produced by TypeScript/Vue extractors)
-to detect auth bypass, token logic deletion, and unscoped guest access.
+Consumes structural_diff facts (produced by language-aware extractors)
+to detect auth bypass, token logic deletion, tenant scope removal,
+and privilege escalation.
 
 Design principles:
   - INPUT: structured facts from extractors (not raw code scanning)
@@ -16,6 +17,11 @@ Rule inventory:
   SEC-4: Token logic deletion/weakening — getToken/!isPublic/!token removed
          or weakened by adding guest bypass conditions
   SEC-5: Protected route exposed — auth-gated pages get guest fallback
+  SEC-6: Auth boundary removal — auth decorator/middleware/dependency deleted
+  SEC-7: Admin/owner check weakening — authorization_check deleted or weakened
+  SEC-8: Tenant/org scope removal — tenant_id/org_id scope filter deleted
+  SEC-9: User-controlled privilege trust — role/isAdmin from request body
+  SEC-10: Security config relaxation — CORS/cookie/CSRF/JWT verify relaxed
 """
 
 from __future__ import annotations
@@ -115,6 +121,31 @@ def evaluate_security_policies(
     # --- SEC-5: Protected route exposed ---
     _check_sec5_protected_route_exposed(
         result, added_by_kind,
+    )
+
+    # --- SEC-6: Auth boundary removal (v0.4) ---
+    _check_sec6_auth_boundary_removal(
+        result, removed_by_kind, added_by_kind,
+    )
+
+    # --- SEC-8: Tenant scope removal (v0.4) ---
+    _check_sec8_tenant_scope_removal(
+        result, removed_by_kind, added_by_kind,
+    )
+
+    # --- SEC-7: Authorization check weakening (v0.4) ---
+    _check_sec7_authorization_weakening(
+        result, removed_by_kind, added_by_kind,
+    )
+
+    # --- SEC-9: User-controlled privilege trust (v0.4) ---
+    _check_sec9_user_controlled_privilege(
+        result, added_by_kind,
+    )
+
+    # --- SEC-10: Security config relaxation (v0.4) ---
+    _check_sec10_security_config_relaxation(
+        result, removed_by_kind, added_by_kind,
     )
 
     # Determine final override decision (highest severity wins)
@@ -517,6 +548,288 @@ def _check_sec5_protected_route_exposed(
                     "decision": "revise_code",
                 })
                 break
+
+
+def _check_sec6_auth_boundary_removal(
+    result: SecurityPolicyResult,
+    removed_by_kind: Dict[str, List[Dict]],
+    added_by_kind: Dict[str, List[Dict]],
+) -> None:
+    """SEC-6: Auth boundary removal.
+
+    Triggers when auth_boundary patterns (decorators, middleware,
+    Depends(), annotations) are removed from the baseline.
+
+    Two sub-cases:
+      - auth_deleted: auth boundary removed with no replacement → escalate
+      - auth_refactored: auth boundary removed AND re-added → warning
+    """
+    removed_auth = removed_by_kind.get("auth_boundary", [])
+    if not removed_auth:
+        return
+
+    added_auth = added_by_kind.get("auth_boundary", [])
+
+    if added_auth:
+        # Auth boundary was refactored (removed + re-added)
+        result.security_warnings.append(
+            f"SEC-6: Auth boundary modified — "
+            f"removed ({_patterns_summary(removed_auth)}), "
+            f"re-added ({_patterns_summary(added_auth)}) — "
+            f"verify the new implementation is equivalent"
+        )
+        result.rule_triggers.append({
+            "rule": "SEC-6",
+            "case": "auth_refactored",
+            "removed": [p.get("pattern", "") for p in removed_auth],
+            "added": [p.get("pattern", "") for p in added_auth],
+            "decision": "advisory",
+        })
+    else:
+        # Auth boundary deleted without replacement
+        result.security_violations.append(
+            f"SEC-6: Auth boundary removed ({_patterns_summary(removed_auth)}) "
+            f"without replacement — authentication enforcement may be disabled"
+        )
+        result.rule_triggers.append({
+            "rule": "SEC-6",
+            "case": "auth_deleted",
+            "removed": [p.get("pattern", "") for p in removed_auth],
+            "decision": "escalate_to_human",
+        })
+
+
+def _check_sec8_tenant_scope_removal(
+    result: SecurityPolicyResult,
+    removed_by_kind: Dict[str, List[Dict]],
+    added_by_kind: Dict[str, List[Dict]],
+) -> None:
+    """SEC-8: Tenant/org scope removal.
+
+    Triggers when tenant_scope patterns (query filters, repository methods)
+    are removed from the baseline.
+
+    Two sub-cases:
+      - scope_deleted: tenant scope removed with no replacement → escalate
+      - scope_refactored: tenant scope removed AND re-added → warning
+    """
+    removed_scope = removed_by_kind.get("tenant_scope", [])
+    if not removed_scope:
+        return
+
+    added_scope = added_by_kind.get("tenant_scope", [])
+
+    if added_scope:
+        # Scope was refactored (removed + re-added)
+        result.security_warnings.append(
+            f"SEC-8: Tenant/org scope modified — "
+            f"removed ({_patterns_summary(removed_scope)}), "
+            f"re-added ({_patterns_summary(added_scope)}) — "
+            f"verify the new scope is equivalent"
+        )
+        result.rule_triggers.append({
+            "rule": "SEC-8",
+            "case": "scope_refactored",
+            "removed": [p.get("pattern", "") for p in removed_scope],
+            "added": [p.get("pattern", "") for p in added_scope],
+            "decision": "advisory",
+        })
+    else:
+        # Scope deleted without replacement — cross-tenant access risk
+        result.security_violations.append(
+            f"SEC-8: Tenant/org scope removed ({_patterns_summary(removed_scope)}) "
+            f"without replacement — cross-tenant data access may be possible"
+        )
+        result.rule_triggers.append({
+            "rule": "SEC-8",
+            "case": "scope_deleted",
+            "removed": [p.get("pattern", "") for p in removed_scope],
+            "decision": "escalate_to_human",
+        })
+
+
+# Obvious always-allow patterns that should never replace real authorization checks
+_ALWAYS_ALLOW_PATTERNS = {
+    "permitall", "anyrequest().permitall()", "return true",
+    "if true", "|| true", "or true", "allowall", "permit_all",
+    "allow_all", ".permitall()", "@permitall",
+}
+
+
+def _check_sec7_authorization_weakening(
+    result: SecurityPolicyResult,
+    removed_by_kind: Dict[str, List[Dict]],
+    added_by_kind: Dict[str, List[Dict]],
+) -> None:
+    """SEC-7: Admin/owner/role/permission check weakening.
+
+    Three tiers:
+      SEC-7a (deletion): authorization_check removed, no replacement → violation (revise_code)
+      SEC-7b (weakening): authorization_check changed → warning only
+      SEC-7c (always-allow): obvious permitAll/if True pattern added → violation (escalate)
+    """
+    removed_authz = removed_by_kind.get("authorization_check", [])
+    added_authz = added_by_kind.get("authorization_check", [])
+
+    # SEC-7c: Check for always-allow patterns in added authorization checks
+    always_allow_added = [
+        p for p in added_authz
+        if any(aa in p.get("pattern", "").lower() for aa in _ALWAYS_ALLOW_PATTERNS)
+    ]
+    if always_allow_added:
+        result.security_violations.append(
+            f"SEC-7: Always-allow pattern added ({_patterns_summary(always_allow_added)}) "
+            f"— authorization check effectively disabled"
+        )
+        result.rule_triggers.append({
+            "rule": "SEC-7",
+            "case": "always_allow",
+            "evidence": [p.get("pattern", "") for p in always_allow_added],
+            "decision": "escalate_to_human",
+        })
+        return
+
+    if not removed_authz:
+        return
+
+    if added_authz:
+        # SEC-7b: Authorization check changed (removed + re-added) → warning
+        result.security_warnings.append(
+            f"SEC-7: Authorization check modified — "
+            f"removed ({_patterns_summary(removed_authz)}), "
+            f"replaced with ({_patterns_summary(added_authz)}) — "
+            f"verify the new check is equivalent"
+        )
+        result.rule_triggers.append({
+            "rule": "SEC-7",
+            "case": "authz_changed",
+            "removed": [p.get("pattern", "") for p in removed_authz],
+            "added": [p.get("pattern", "") for p in added_authz],
+            "decision": "advisory",
+        })
+    else:
+        # SEC-7a: Authorization check deleted without replacement → violation
+        result.security_violations.append(
+            f"SEC-7: Authorization check removed ({_patterns_summary(removed_authz)}) "
+            f"without replacement — admin/owner access control may be disabled"
+        )
+        result.rule_triggers.append({
+            "rule": "SEC-7",
+            "case": "authz_deleted",
+            "removed": [p.get("pattern", "") for p in removed_authz],
+            "decision": "revise_code",
+        })
+
+
+def _check_sec9_user_controlled_privilege(
+    result: SecurityPolicyResult,
+    added_by_kind: Dict[str, List[Dict]],
+) -> None:
+    """SEC-9: User-controlled privilege trust.
+
+    Triggers when user_controlled_privilege patterns are added.
+    Trusting role/isAdmin/userId/tenantId from request body/query
+    is always a violation — client-supplied privilege must never be trusted.
+
+    Decision: revise_code
+    """
+    added_priv = added_by_kind.get("user_controlled_privilege", [])
+    if not added_priv:
+        return
+
+    result.security_violations.append(
+        f"SEC-9: User-controlled privilege trusted ({_patterns_summary(added_priv)}) "
+        f"— role/admin/userId from request body must not be trusted for authorization"
+    )
+    result.rule_triggers.append({
+        "rule": "SEC-9",
+        "case": "privilege_from_body",
+        "evidence": [p.get("pattern", "") for p in added_priv],
+        "decision": "revise_code",
+    })
+
+
+# Relaxed security config indicators
+_RELAXED_CONFIG_PATTERNS = {
+    "origin: '*'", 'origin: "*"', "origin: *", "origins: ['*']",
+    "allow_origins=[\"*\"]", "allow_origins=['*']",
+    "secure: false", "httponly: false", "httpOnly: false",
+    "samesite: 'none'", "samesite: none", "sameSite: 'none'",
+    "csrf: false", "verify: false", "cors()",
+    "credentials: false", "SESSION_COOKIE_SECURE = False",
+    "SESSION_COOKIE_HTTPONLY = False", "SECURE_SSL_REDIRECT = False",
+}
+
+
+def _check_sec10_security_config_relaxation(
+    result: SecurityPolicyResult,
+    removed_by_kind: Dict[str, List[Dict]],
+    added_by_kind: Dict[str, List[Dict]],
+) -> None:
+    """SEC-10: Security config relaxation.
+
+    Triggers when:
+      - security_config kind in removed (strict config removed)
+        AND relaxed config added in its place
+      - OR security_config kind removed with no replacement
+
+    New security restrictions being added are NOT violations.
+
+    Decision: revise_code
+    """
+    removed_config = removed_by_kind.get("security_config", [])
+    added_config = added_by_kind.get("security_config", [])
+
+    # Check for relaxed patterns in added configs
+    relaxed_added = [
+        p for p in added_config
+        if any(
+            rp in p.get("pattern", "").lower()
+            for rp in (r.lower() for r in _RELAXED_CONFIG_PATTERNS)
+        )
+    ]
+
+    if relaxed_added:
+        result.security_violations.append(
+            f"SEC-10: Security config relaxed ({_patterns_summary(relaxed_added)}) "
+            f"\u2014 CORS/cookie/CSRF/JWT settings weakened"
+        )
+        result.rule_triggers.append({
+            "rule": "SEC-10",
+            "case": "config_relaxed",
+            "evidence": [p.get("pattern", "") for p in relaxed_added],
+            "decision": "revise_code",
+        })
+        return
+
+    if removed_config and not added_config:
+        # Security config deleted without replacement
+        result.security_violations.append(
+            f"SEC-10: Security config removed ({_patterns_summary(removed_config)}) "
+            f"without replacement \u2014 security settings may be at defaults"
+        )
+        result.rule_triggers.append({
+            "rule": "SEC-10",
+            "case": "config_deleted",
+            "removed": [p.get("pattern", "") for p in removed_config],
+            "decision": "revise_code",
+        })
+    elif removed_config and added_config and not relaxed_added:
+        # Config changed but not to a known-relaxed pattern \u2014 advisory
+        result.security_warnings.append(
+            f"SEC-10: Security config modified \u2014 "
+            f"removed ({_patterns_summary(removed_config)}), "
+            f"replaced with ({_patterns_summary(added_config)}) \u2014 "
+            f"verify the new config is equivalent or stricter"
+        )
+        result.rule_triggers.append({
+            "rule": "SEC-10",
+            "case": "config_changed",
+            "removed": [p.get("pattern", "") for p in removed_config],
+            "added": [p.get("pattern", "") for p in added_config],
+            "decision": "advisory",
+        })
+
 
 
 # ---------------------------------------------------------------------------

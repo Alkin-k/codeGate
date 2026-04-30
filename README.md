@@ -5,7 +5,7 @@
 **The governance layer for AI coding agents.**
 **AI 编码代理的治理层。**
 
-[![Alpha v0.3](https://img.shields.io/badge/status-alpha%20v0.3-blue)]()
+[![Alpha v0.4](https://img.shields.io/badge/status-alpha%20v0.4-blue)]()
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue)]()
 
@@ -53,7 +53,7 @@ Requirement
          ▼
 ┌─────────────────┐
 │  Policy Check    │ ← final approve / revise_code / escalate_to_human
-│  (Rule 1-11)     │   deterministic rules + SEC-1~5 security gate
+│  (Rule 1-11)     │   deterministic rules + SEC-1~10 security gate
 └─────────────────┘
 ```
 
@@ -101,7 +101,7 @@ codegate ab-batch --cases eval_cases/image2pdf_cases.yaml
 | False positives | **0 / 6 scenarios** | Safe scoped guest access is approved |
 | False negatives | **0 / 6 scenarios** | Unsafe guest/public route exposure is blocked |
 | Benchmark harness | **6 scenarios** | Reproducible T1-T6 frontend/client suite |
-| Test suite | **142 tests passing** | Unit, integration, policy, extractor, Codex adapter, and LLM JSON robustness |
+| Test suite | **201 tests passing** | Unit, integration, policy, extractor, Codex adapter, and LLM JSON robustness |
 
 ### What Got Caught
 
@@ -110,6 +110,25 @@ In the V3 frontend/client benchmark against a real Vue 3 + TypeScript + Tauri pr
 - ✅ **T5 constrained guest mode approved** — route-scoped `meta.guest` access with preserved token checks
 - ⚠️ **T6 unconstrained guest mode escalated** — protected workspace routes were exposed via `public: true`, caught by deterministic SEC-5 policy evidence
 - 🔄 **Rule 7 contract drift blocks** — assumed-default boundary issues are revised even when the LLM gatekeeper says approve
+
+## Evidence: Backend/API Security Gate (V4)
+
+v0.4 adds deterministic backend security drift checks for Python/FastAPI, Java/Spring, and backend TypeScript APIs. The public fixture is zero-LLM, so it can be reproduced without API keys or executor setup.
+
+```bash
+.venv/bin/python benchmarks/fixtures/backend_security_demo/run_demo.py
+```
+
+| Scenario | Risk | Expected |
+|----------|------|----------|
+| T7 | Auth boundary preserved | approve |
+| T8 | Auth boundary removed | block via SEC-6 |
+| T9 | Tenant scope preserved | approve |
+| T10 | Tenant scope removed | block via SEC-8 |
+| T11 | User-provided role trusted | block via SEC-9 where implemented |
+| T12 | CORS/cookie/security config relaxed | block via SEC-10 where implemented |
+
+The demo validates both the final decision and the expected SEC rule trigger. This prevents a scenario from passing only because an unrelated rule happened to block it.
 
 ## Key Capabilities
 
@@ -120,7 +139,8 @@ In the V3 frontend/client benchmark against a real Vue 3 + TypeScript + Tauri pr
 | Baseline-aware drift detection (3-layer) | ✅ |
 | Ghost pattern suppression (zero false positives) | ✅ |
 | Policy engine with 11 deterministic rules | ✅ |
-| Security gate for auth/routing risks (SEC-1~5) | ✅ |
+| Security gate for frontend auth/routing risks (SEC-1~5) | ✅ |
+| Backend/API security gate (SEC-6~10) | ✅ |
 | TypeScript/Vue + Rust structural extractors | ✅ |
 | Reproducible V2 frontend/client benchmark harness | ✅ |
 | Risk-aware thresholds (low/medium/high) | ✅ |
@@ -146,6 +166,18 @@ Read the frozen report:
 - [`spec/benchmark-v3-security-gate-report.md`](spec/benchmark-v3-security-gate-report.md)
 - [`spec/release-notes-v3-security-benchmark.md`](spec/release-notes-v3-security-benchmark.md)
 
+## Reproduce the V4 Backend Demo
+
+```bash
+.venv/bin/python benchmarks/fixtures/backend_security_demo/run_demo.py
+```
+
+Read the v0.4 docs:
+
+- [`spec/benchmark-v4-backend-security-gate-report.md`](spec/benchmark-v4-backend-security-gate-report.md)
+- [`spec/release-notes-v0.4.0.md`](spec/release-notes-v0.4.0.md)
+- [`docs/backend-security-gate-design.md`](docs/backend-security-gate-design.md)
+
 ## Evidence Reports
 
 Each governance run produces a complete audit trail:
@@ -163,10 +195,10 @@ Each governance run produces a complete audit trail:
 ```
 src/codegate/
 ├── agents/          # LLM agents: spec_council, executor, reviewer, gatekeeper
-├── adapters/        # Executor adapters (OpenCode, Gemini CLI)
-├── analysis/        # Baseline diff + TS/Vue/Rust structural extractors
+├── adapters/        # Executor adapters (OpenCode, Gemini CLI, Codex CLI)
+├── analysis/        # Baseline diff + TS/Vue/Rust/Python structural extractors
 ├── eval/            # A/B runner + batch runner
-├── policies/        # Policy engine + Security gate (SEC-1~5)
+├── policies/        # Policy engine + Security gate (SEC-1~10)
 ├── prompts/         # LLM prompt templates
 ├── schemas/         # Pydantic models (contract, review, gate, execution)
 ├── store/           # Artifact persistence
@@ -195,11 +227,11 @@ Quick path:
 
 ## Honest Limitations
 
-- **Alpha v0.3** — not production-ready, API may change
+- **Alpha v0.4** — not production-ready, API may change
 - **Executor support** — OpenCode, Gemini CLI, and Codex CLI (Cursor/Windsurf adapters planned)
 - **LLM non-determinism** — each run may produce slightly different results
 - **Governance overhead** — ~20s per task (the price of behavioral safety)
-- **Security rules** — SEC-1~5 cover frontend auth/routing only (backend rules planned for v0.4)
+- **Security rules** — SEC-1~10 cover common frontend routing and backend API drift patterns, not a full SAST replacement
 
 ## License
 

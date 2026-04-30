@@ -6,6 +6,7 @@ Tests are fully mocked — no actual Codex CLI or API key required.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import pytest
 from pathlib import Path
@@ -211,7 +212,7 @@ class TestCodexExecution:
         # Check the subprocess.run call
         call_args = mock_run.call_args
         cmd = call_args[0][0]
-        assert cmd[0] == "codex"
+        assert cmd[0] == "codex" or cmd[0].endswith("/codex")
         assert cmd[1] == "exec"
         assert "--full-auto" in cmd
         assert "--skip-git-repo-check" in cmd
@@ -277,6 +278,29 @@ class TestAdapterProperties:
         assert adapter._resolve_work_dir() == "/tmp/test-project"
 
     def test_resolve_work_dir_default(self):
-        import os
         adapter = CodexCLIAdapter()
         assert adapter._resolve_work_dir() == os.getcwd()
+
+    def test_default_codex_bin_skips_broken_shebang(self, tmp_path, monkeypatch):
+        broken_dir = tmp_path / "broken"
+        good_dir = tmp_path / "good"
+        broken_dir.mkdir()
+        good_dir.mkdir()
+
+        broken = broken_dir / "codex"
+        broken.write_text("#!/missing/node\nconsole.log('broken')\n")
+        broken.chmod(0o755)
+
+        good = good_dir / "codex"
+        good.write_text("#!/usr/bin/env node\nconsole.log('good')\n")
+        good.chmod(0o755)
+
+        monkeypatch.setenv("PATH", f"{broken_dir}{os.pathsep}{good_dir}")
+        monkeypatch.setattr(
+            "codegate.adapters.codex.shutil.which",
+            lambda name: "/usr/bin/node" if name == "node" else None,
+        )
+
+        adapter = CodexCLIAdapter()
+
+        assert adapter._codex_bin == str(good)
