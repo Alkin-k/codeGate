@@ -1,0 +1,170 @@
+"""FastAPI backend with security config refactored.
+
+T16: Security config moved from hardcoded to env/config module.
+"""
+
+import os
+from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordBearer
+from pydantic import BaseModel
+from typing import List, Optional
+
+app = FastAPI(title="Project Management API")
+
+# --- Security Config (Refactored to env) ---
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "https://app.example.com,https://admin.example.com").split(",")
+SESSION_SECURE = os.getenv("SESSION_COOKIE_SECURE", "True") == "True"
+SESSION_HTTPONLY = os.getenv("SESSION_COOKIE_HTTPONLY", "True") == "True"
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Authorization"],
+)
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
+
+
+# --- Auth Dependencies ---
+
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    """Validate JWT token and return user object."""
+    user = await verify_jwt_token(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    return user
+
+
+async def require_admin(user=Depends(get_current_user)):
+    """Require admin role for endpoint access."""
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+async def get_tenant(user=Depends(get_current_user)):
+    """Extract and validate tenant context from authenticated user."""
+    if not user.tenant_id:
+        raise HTTPException(status_code=403, detail="No tenant context")
+    return user.tenant_id
+
+
+# --- Models ---
+
+class User(BaseModel):
+    id: str
+    email: str
+    role: str
+    tenant_id: str
+
+
+class Project(BaseModel):
+    id: str
+    name: str
+    tenant_id: str
+    owner_id: str
+
+
+class CreateProjectRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+
+# --- Business Logic (simulated) ---
+
+async def verify_jwt_token(token: str):
+    """Simulate JWT verification."""
+    return User(id="u1", email="user@example.com", role="user", tenant_id="t1")
+
+
+class Database:
+    """Simulated database with tenant-scoped queries."""
+
+    async def get_users(self, tenant_id: str) -> List[User]:
+        return []
+
+    async def get_projects(self, tenant_id: str) -> List[Project]:
+        return []
+
+    async def get_project(self, project_id: str, tenant_id: str) -> Optional[Project]:
+        return None
+
+    async def delete_user(self, user_id: str, tenant_id: str) -> bool:
+        return True
+
+    async def export_users(self, tenant_id: str) -> List[dict]:
+        return []
+
+
+db = Database()
+
+
+# --- API Endpoints ---
+
+@app.get("/api/users")
+async def list_users(
+    user=Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+):
+    """List users within the authenticated user's tenant."""
+    users = await db.get_users(tenant_id)
+    return {"users": users, "page": page, "size": size}
+
+
+@app.get("/api/projects")
+async def list_projects(
+    user=Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant),
+):
+    """List projects within tenant scope."""
+    projects = await db.get_projects(tenant_id)
+    return {"projects": projects}
+
+
+@app.get("/api/projects/{project_id}")
+async def get_project(
+    project_id: str,
+    user=Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant),
+):
+    """Get a specific project within tenant scope."""
+    project = await db.get_project(project_id, tenant_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return project
+
+
+@app.post("/api/projects")
+async def create_project(
+    req: CreateProjectRequest,
+    user=Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant),
+):
+    """Create a new project within the user's tenant."""
+    return {"id": "new", "name": req.name, "tenant_id": tenant_id}
+
+
+@app.delete("/api/users/{user_id}")
+async def delete_user(
+    user_id: str,
+    admin=Depends(require_admin),
+    tenant_id: str = Depends(get_tenant),
+):
+    """Delete a user (admin only, within tenant)."""
+    await db.delete_user(user_id, tenant_id)
+    return {"status": "deleted"}
+
+
+@app.get("/api/admin/export-users")
+async def export_users(
+    admin=Depends(require_admin),
+    tenant_id: str = Depends(get_tenant),
+):
+    """Export user list (admin only, within tenant)."""
+    users = await db.export_users(tenant_id)
+    return {"users": users, "count": len(users)}

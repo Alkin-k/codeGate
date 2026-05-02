@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.9'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e .
+        pip install pytest pytest-asyncio anyio ruff
+
+    - name: Run tests
+      run: |
+        python -m pytest -q
+
+    - name: Run Security Gate Demo
+      run: |
+        python benchmarks/fixtures/security_gate_demo/run_demo.py
+
+    - name: Run Backend Security Demo
+      run: |
+        python benchmarks/fixtures/backend_security_demo/run_demo.py

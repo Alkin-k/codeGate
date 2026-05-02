@@ -5,7 +5,8 @@
 **The governance layer for AI coding agents.**
 **AI 编码代理的治理层。**
 
-[![Alpha v0.4](https://img.shields.io/badge/status-alpha%20v0.4-blue)]()
+[![CI](https://github.com/Alkin-k/codeGate/actions/workflows/ci.yml/badge.svg)](https://github.com/Alkin-k/codeGate/actions/workflows/ci.yml)
+[![Alpha v0.5.0](https://img.shields.io/badge/status-alpha%20v0.5.0-blue)]()
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue)]()
 
@@ -91,29 +92,30 @@ codegate ab --project /path/to/project --input "your requirement" \
 codegate ab-batch --cases eval_cases/image2pdf_cases.yaml
 ```
 
-## Evidence: Real Benchmark Results (V3 Security Gate)
+## Evidence: Real Benchmark Results (V5 Evidence Quality)
 
 > All numbers from actual benchmark runs — not estimates.
 
 | Metric | Value | What It Means |
 |--------|-------|---------------|
 | Governance overhead | **~16-22s** | Extra governance time for contract/security review |
-| False positives | **0 / 6 scenarios** | Safe scoped guest access is approved |
-| False negatives | **0 / 6 scenarios** | Unsafe guest/public route exposure is blocked |
-| Benchmark harness | **6 scenarios** | Reproducible T1-T6 frontend/client suite |
-| Test suite | **201 tests passing** | Unit, integration, policy, extractor, Codex adapter, and LLM JSON robustness |
+| Blocking false positives | **0 / 4 scenarios** | Common extractor-visible refactors remain non-blocking |
+| Backend demo decisions | **6 / 6 matched** | Blocking and preserved backend scenarios (T7-T12) matched expected policy decisions |
+| Benchmark harness | **10 scenarios** | Reproducible T7-T16 backend security suite |
+| Evidence Quality | **SEC-1~10 Coverage** | SEC-1~10 rule triggers emit structured evidence; tests cover representative triggers. |
 
-### What Got Caught
 
-In the V3 frontend/client benchmark against a real Vue 3 + TypeScript + Tauri project:
+### What Got Caught (and What Didn't)
 
-- ✅ **T5 constrained guest mode approved** — route-scoped `meta.guest` access with preserved token checks
-- ⚠️ **T6 unconstrained guest mode escalated** — protected workspace routes were exposed via `public: true`, caught by deterministic SEC-5 policy evidence
-- 🔄 **Rule 7 contract drift blocks** — assumed-default boundary issues are revised even when the LLM gatekeeper says approve
+In the V5 backend security demo against realistic FastAPI/Java/Node code:
 
-## Evidence: Backend/API Security Gate (V4)
+- ✅ **T13-T16 Common Refactors approved** — renaming `get_current_user` to `get_authenticated_user` or moving hardcoded CORS to `os.getenv` is recognized as non-blocking (advisory).
+- ⚠️ **T8 Auth Removal escalated** — removing `Depends(get_current_user)` without replacement is blocked with SEC-6 evidence.
+- ⚠️ **T11 User Role Trust revised** — trusting `role` from request body is blocked with SEC-9 evidence.
 
-v0.4 adds deterministic backend security drift checks for Python/FastAPI, Java/Spring, and backend TypeScript APIs. The public fixture is zero-LLM, so it can be reproduced without API keys or executor setup.
+## Evidence: Backend/API Security Gate (V5)
+
+v0.5 adds structured evidence and safe refactor support. The public fixture is zero-LLM, so it can be reproduced without API keys or executor setup.
 
 ```bash
 .venv/bin/python benchmarks/fixtures/backend_security_demo/run_demo.py
@@ -121,12 +123,12 @@ v0.4 adds deterministic backend security drift checks for Python/FastAPI, Java/S
 
 | Scenario | Risk | Expected |
 |----------|------|----------|
-| T7 | Auth boundary preserved | approve |
-| T8 | Auth boundary removed | block via SEC-6 |
-| T9 | Tenant scope preserved | approve |
-| T10 | Tenant scope removed | block via SEC-8 |
-| T11 | User-provided role trusted | block via SEC-9 where implemented |
-| T12 | CORS/cookie/security config relaxed | block via SEC-10 where implemented |
+| T7-T9 | Auth/Tenant scope preserved | approve |
+| T8 | Auth boundary removed | block via SEC-6 (escalate_to_human) |
+| T10 | Tenant scope removed | block via SEC-8 (escalate_to_human) |
+| T11 | User-provided role trusted | block via SEC-9 (revise_code) |
+| T12 | Security config relaxed | block via SEC-10 (revise_code) |
+| T13-T16 | Safe refactoring | approve (advisory warning) |
 
 The demo validates both the final decision and the expected SEC rule trigger. This prevents a scenario from passing only because an unrelated rule happened to block it.
 
@@ -227,7 +229,7 @@ Quick path:
 
 ## Honest Limitations
 
-- **Alpha v0.4** — not production-ready, API may change
+- **Alpha v0.5.0** — not production-ready, API may change
 - **Executor support** — OpenCode, Gemini CLI, and Codex CLI (Cursor/Windsurf adapters planned)
 - **LLM non-determinism** — each run may produce slightly different results
 - **Governance overhead** — ~20s per task (the price of behavioral safety)

@@ -2,6 +2,41 @@
 
 All notable changes to CodeGate will be documented in this file.
 
+## [0.5.0] - 2026-05-02
+
+### Added
+
+- **Structured Security Evidence**
+  - SEC-1~10 representative rule triggers now emit a unified `evidence`
+    object with `baseline`, `candidate`, and `summary` fields
+  - Evidence points include `file`, `line`, `kind`, `pattern`, and `snippet`
+  - Rule triggers now include `severity` and `reason` for deterministic
+    policy explainability
+
+- **Safe Refactoring Suite**
+  - Added backend demo scenarios T13-T16 for extractor-visible safe refactors
+  - T13-T16 validate non-blocking advisory outcomes for auth, tenant scope,
+    role-check, and security-config refactors
+  - Added false-positive regression tests for safe refactor scenarios
+
+- **Public CI Demo**
+  - Added GitHub Actions workflow running pytest plus zero-LLM security demos
+  - Added evidence schema documentation and v0.5 benchmark report
+
+### Changed
+
+- Bumped package version to `0.5.0`
+- Backend security demo now prints evidence summaries and separates blocking
+  drift scenarios from safe refactor scenarios
+- Python security extractor recognizes additional FastAPI refactor names such
+  as `get_org_context`, `get_tenant_context`, and `require_admin_role`
+
+### Verified
+
+- `pytest -q` — **228 passed**
+- Frontend Security Gate Demo — T5 approve, T6 revise_code
+- Backend Security Demo — T7-T16 all PASS
+
 ## [0.4.0] - 2026-04-30
 
 ### Added

@@ -29,7 +29,7 @@ from codegate.analysis.baseline_diff import PatternMatch
 # Matches: Depends(get_current_user), Depends(require_admin), etc.
 _FASTAPI_AUTH_DEPENDS_RE = re.compile(
     r"Depends\s*\(\s*(get_current_user|get_current_active_user|require_admin|"
-    r"require_role|require_auth|get_user|current_user|verify_token|"
+    r"require_role|require_admin_role|require_auth|get_user|current_user|verify_token|"
     r"check_permission|require_permission|auth_required|get_authenticated_user)\s*"
     r"(?:\([^)]*\))?\s*\)",
     re.MULTILINE,
@@ -38,8 +38,8 @@ _FASTAPI_AUTH_DEPENDS_RE = re.compile(
 # General Depends() for tenant/org scoping
 # Matches: Depends(get_tenant), Depends(get_org), etc.
 _FASTAPI_TENANT_DEPENDS_RE = re.compile(
-    r"Depends\s*\(\s*(get_tenant|get_org|get_organization|"
-    r"get_tenant_id|get_org_id|verify_tenant|require_tenant)\s*"
+    r"Depends\s*\(\s*(get_tenant|get_org|get_organization|get_org_context|"
+    r"get_tenant_id|get_org_id|verify_tenant|require_tenant|get_tenant_context)\s*"
     r"(?:\([^)]*\))?\s*\)",
     re.MULTILINE,
 )

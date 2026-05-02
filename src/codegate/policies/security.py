@@ -200,8 +200,14 @@ def _check_sec1_auth_guard_bypass(
         result.rule_triggers.append({
             "rule": "SEC-1",
             "case": "guard_removed",
-            "evidence": [p.get("pattern", "") for p in removed_guards],
+            "removed": [p.get("pattern", "") for p in removed_guards],
+            "severity": "violation",
             "decision": "escalate_to_human",
+            "reason": "router.beforeEach guard was removed; authentication enforcement may be completely disabled.",
+            "evidence": _build_evidence(
+                baseline=removed_guards,
+                summary=_evidence_summary_oneliner(removed_guards),
+            ),
         })
         return
 
@@ -241,7 +247,14 @@ def _check_sec1_auth_guard_bypass(
             "case": "token_replaced_by_guest",
             "removed": [p.get("pattern", "") for p in removed_token_checks],
             "added": [p.get("pattern", "") for p in added_guest_conditions],
+            "severity": "violation",
             "decision": "escalate_to_human",
+            "reason": "Token auth condition removed and replaced with guest bypass; authentication may be circumvented.",
+            "evidence": _build_evidence(
+                baseline=removed_token_checks,
+                candidate=added_guest_conditions,
+                summary=_evidence_summary_oneliner(removed_token_checks, added_guest_conditions),
+            ),
         })
 
     unscoped_added_guard_guest = [
@@ -260,7 +273,14 @@ def _check_sec1_auth_guard_bypass(
             "case": "guard_condition_weakened",
             "removed": [p.get("pattern", "") for p in removed_guard_token],
             "added": [p.get("pattern", "") for p in unscoped_added_guard_guest],
+            "severity": "violation",
             "decision": "escalate_to_human",
+            "reason": "Guard condition weakened; token check replaced with unscoped guest bypass.",
+            "evidence": _build_evidence(
+                baseline=removed_guard_token,
+                candidate=unscoped_added_guard_guest,
+                summary=_evidence_summary_oneliner(removed_guard_token, unscoped_added_guard_guest),
+            ),
         })
 
 
@@ -288,8 +308,14 @@ def _check_sec2_global_guest_flag(
         result.rule_triggers.append({
             "rule": "SEC-2",
             "case": "guest_storage_added",
-            "evidence": [p.get("pattern", "") for p in guest_storage],
+            "added": [p.get("pattern", "") for p in guest_storage],
+            "severity": "advisory",
             "decision": "advisory",
+            "reason": "New guest-related storage key(s) added; verify that guest state does not bypass authentication.",
+            "evidence": _build_evidence(
+                candidate=guest_storage,
+                summary=_evidence_summary_oneliner(None, guest_storage),
+            ),
         })
 
 
@@ -373,8 +399,14 @@ def _check_sec3_unscoped_guest_access(
         result.rule_triggers.append({
             "rule": "SEC-3",
             "case": "scoped_guest_access",
-            "evidence": [p.get("pattern", "") for p in all_guest_in_guard],
+            "added": [p.get("pattern", "") for p in all_guest_in_guard],
+            "severity": "advisory",
             "decision": "advisory",
+            "reason": "Guest access condition added with route meta scoping; verify that only intended routes are accessible.",
+            "evidence": _build_evidence(
+                candidate=all_guest_in_guard,
+                summary=_evidence_summary_oneliner(None, all_guest_in_guard),
+            ),
         })
         return
 
@@ -390,8 +422,14 @@ def _check_sec3_unscoped_guest_access(
         result.rule_triggers.append({
             "rule": "SEC-3",
             "case": "unscoped_despite_meta",
-            "evidence": [p.get("pattern", "") for p in all_guest_in_guard],
+            "added": [p.get("pattern", "") for p in all_guest_in_guard],
+            "severity": "violation",
             "decision": "revise_code",
+            "reason": "Guest bypass condition in global guard does not reference route meta; guard may bypass authentication for all routes.",
+            "evidence": _build_evidence(
+                candidate=all_guest_in_guard,
+                summary=_evidence_summary_oneliner(None, all_guest_in_guard),
+            ),
         })
     else:
         # No meta scoping at all — this is the T6 pattern (global bypass)
@@ -403,8 +441,14 @@ def _check_sec3_unscoped_guest_access(
         result.rule_triggers.append({
             "rule": "SEC-3",
             "case": "global_guest_bypass",
-            "evidence": [p.get("pattern", "") for p in all_guest_in_guard],
+            "added": [p.get("pattern", "") for p in all_guest_in_guard],
+            "severity": "violation",
             "decision": "escalate_to_human",
+            "reason": "Guest bypass in global guard with no route meta scoping; this creates a global authentication bypass.",
+            "evidence": _build_evidence(
+                candidate=all_guest_in_guard,
+                summary=_evidence_summary_oneliner(None, all_guest_in_guard),
+            ),
         })
 
 
@@ -479,7 +523,14 @@ def _check_sec4_token_logic_deletion(
                 "case": "token_weakened",
                 "removed": [p.get("pattern", "") for p in all_deleted],
                 "added": [p.get("pattern", "") for p in weakened_with_guest],
+                "severity": "violation",
                 "decision": "revise_code",
+                "reason": "Token/auth condition weakened; original check now includes unscoped guest bypass.",
+                "evidence": _build_evidence(
+                    baseline=all_deleted,
+                    candidate=weakened_with_guest,
+                    summary=_evidence_summary_oneliner(all_deleted, weakened_with_guest),
+                ),
             })
         else:
             # Token logic was refactored without adding guest bypass
@@ -492,7 +543,14 @@ def _check_sec4_token_logic_deletion(
                 "case": "token_refactored",
                 "removed": [p.get("pattern", "") for p in all_deleted],
                 "added": [p.get("pattern", "") for p in all_re_added],
+                "severity": "advisory",
                 "decision": "advisory",
+                "reason": "Token logic was modified (removed and re-added); verify the new implementation is equivalent.",
+                "evidence": _build_evidence(
+                    baseline=all_deleted,
+                    candidate=all_re_added,
+                    summary=_evidence_summary_oneliner(all_deleted, all_re_added),
+                ),
             })
     else:
         # Token logic deleted without any replacement
@@ -504,7 +562,13 @@ def _check_sec4_token_logic_deletion(
             "rule": "SEC-4",
             "case": "token_deleted",
             "removed": [p.get("pattern", "") for p in all_deleted],
+            "severity": "violation",
             "decision": "revise_code",
+            "reason": "Token/auth check deleted without replacement; authentication may be disabled.",
+            "evidence": _build_evidence(
+                baseline=all_deleted,
+                summary=_evidence_summary_oneliner(all_deleted),
+            ),
         })
 
 
@@ -541,11 +605,15 @@ def _check_sec5_protected_route_exposed(
                 result.rule_triggers.append({
                     "rule": "SEC-5",
                     "case": "protected_route_public",
-                    "evidence": p.get("pattern", ""),
-                    "context": p.get("context", ""),
-                    "file": p.get("file", ""),
-                    "protected_keyword": keyword,
+                    "added": [p.get("pattern", "")],
+                    "severity": "violation",
                     "decision": "revise_code",
+                    "reason": f"public access added to protected route containing '{keyword}'; verify that this route is intended to be public.",
+                    "evidence": _build_evidence(
+                        candidate=[p],
+                        summary=f"candidate {p.get('file', '?')}:{p.get('line_number', '?')} {p.get('pattern', '')[:40]}",
+                    ),
+                    "protected_keyword": keyword,
                 })
                 break
 
@@ -583,7 +651,14 @@ def _check_sec6_auth_boundary_removal(
             "case": "auth_refactored",
             "removed": [p.get("pattern", "") for p in removed_auth],
             "added": [p.get("pattern", "") for p in added_auth],
+            "severity": "advisory",
             "decision": "advisory",
+            "reason": "Auth boundary was refactored (removed and re-added); verify equivalence.",
+            "evidence": _build_evidence(
+                baseline=removed_auth,
+                candidate=added_auth,
+                summary=_evidence_summary_oneliner(removed_auth, added_auth),
+            ),
         })
     else:
         # Auth boundary deleted without replacement
@@ -595,7 +670,13 @@ def _check_sec6_auth_boundary_removal(
             "rule": "SEC-6",
             "case": "auth_deleted",
             "removed": [p.get("pattern", "") for p in removed_auth],
+            "severity": "violation",
             "decision": "escalate_to_human",
+            "reason": "Auth boundary removed without replacement; authentication enforcement may be disabled.",
+            "evidence": _build_evidence(
+                baseline=removed_auth,
+                summary=_evidence_summary_oneliner(removed_auth),
+            ),
         })
 
 
@@ -632,7 +713,14 @@ def _check_sec8_tenant_scope_removal(
             "case": "scope_refactored",
             "removed": [p.get("pattern", "") for p in removed_scope],
             "added": [p.get("pattern", "") for p in added_scope],
+            "severity": "advisory",
             "decision": "advisory",
+            "reason": "Tenant/org scope was refactored (removed and re-added); verify equivalence.",
+            "evidence": _build_evidence(
+                baseline=removed_scope,
+                candidate=added_scope,
+                summary=_evidence_summary_oneliner(removed_scope, added_scope),
+            ),
         })
     else:
         # Scope deleted without replacement — cross-tenant access risk
@@ -644,7 +732,13 @@ def _check_sec8_tenant_scope_removal(
             "rule": "SEC-8",
             "case": "scope_deleted",
             "removed": [p.get("pattern", "") for p in removed_scope],
+            "severity": "violation",
             "decision": "escalate_to_human",
+            "reason": "Tenant/org scope removed without replacement; cross-tenant data access may be possible.",
+            "evidence": _build_evidence(
+                baseline=removed_scope,
+                summary=_evidence_summary_oneliner(removed_scope),
+            ),
         })
 
 
@@ -684,8 +778,14 @@ def _check_sec7_authorization_weakening(
         result.rule_triggers.append({
             "rule": "SEC-7",
             "case": "always_allow",
-            "evidence": [p.get("pattern", "") for p in always_allow_added],
+            "added": [p.get("pattern", "") for p in always_allow_added],
+            "severity": "violation",
             "decision": "escalate_to_human",
+            "reason": "Always-allow pattern added; authorization check effectively disabled.",
+            "evidence": _build_evidence(
+                candidate=always_allow_added,
+                summary=_evidence_summary_oneliner(None, always_allow_added),
+            ),
         })
         return
 
@@ -705,7 +805,14 @@ def _check_sec7_authorization_weakening(
             "case": "authz_changed",
             "removed": [p.get("pattern", "") for p in removed_authz],
             "added": [p.get("pattern", "") for p in added_authz],
+            "severity": "advisory",
             "decision": "advisory",
+            "reason": "Authorization check was modified; verify the new check is equivalent.",
+            "evidence": _build_evidence(
+                baseline=removed_authz,
+                candidate=added_authz,
+                summary=_evidence_summary_oneliner(removed_authz, added_authz),
+            ),
         })
     else:
         # SEC-7a: Authorization check deleted without replacement → violation
@@ -717,7 +824,13 @@ def _check_sec7_authorization_weakening(
             "rule": "SEC-7",
             "case": "authz_deleted",
             "removed": [p.get("pattern", "") for p in removed_authz],
+            "severity": "violation",
             "decision": "revise_code",
+            "reason": "Authorization check removed without replacement; access control may be disabled.",
+            "evidence": _build_evidence(
+                baseline=removed_authz,
+                summary=_evidence_summary_oneliner(removed_authz),
+            ),
         })
 
 
@@ -744,8 +857,14 @@ def _check_sec9_user_controlled_privilege(
     result.rule_triggers.append({
         "rule": "SEC-9",
         "case": "privilege_from_body",
-        "evidence": [p.get("pattern", "") for p in added_priv],
+        "added": [p.get("pattern", "") for p in added_priv],
+        "severity": "violation",
         "decision": "revise_code",
+        "reason": "User-controlled privilege from request body must not be trusted for authorization.",
+        "evidence": _build_evidence(
+            candidate=added_priv,
+            summary=_evidence_summary_oneliner(None, added_priv),
+        ),
     })
 
 
@@ -797,8 +916,14 @@ def _check_sec10_security_config_relaxation(
         result.rule_triggers.append({
             "rule": "SEC-10",
             "case": "config_relaxed",
-            "evidence": [p.get("pattern", "") for p in relaxed_added],
+            "added": [p.get("pattern", "") for p in relaxed_added],
+            "severity": "violation",
             "decision": "revise_code",
+            "reason": "Security config relaxed; CORS/cookie/CSRF/JWT settings weakened.",
+            "evidence": _build_evidence(
+                candidate=relaxed_added,
+                summary=_evidence_summary_oneliner(None, relaxed_added),
+            ),
         })
         return
 
@@ -812,7 +937,13 @@ def _check_sec10_security_config_relaxation(
             "rule": "SEC-10",
             "case": "config_deleted",
             "removed": [p.get("pattern", "") for p in removed_config],
+            "severity": "violation",
             "decision": "revise_code",
+            "reason": "Security config removed without replacement; settings may be at insecure defaults.",
+            "evidence": _build_evidence(
+                baseline=removed_config,
+                summary=_evidence_summary_oneliner(removed_config),
+            ),
         })
     elif removed_config and added_config and not relaxed_added:
         # Config changed but not to a known-relaxed pattern \u2014 advisory
@@ -827,7 +958,14 @@ def _check_sec10_security_config_relaxation(
             "case": "config_changed",
             "removed": [p.get("pattern", "") for p in removed_config],
             "added": [p.get("pattern", "") for p in added_config],
+            "severity": "advisory",
             "decision": "advisory",
+            "reason": "Security config was modified; verify the new config is equivalent or stricter.",
+            "evidence": _build_evidence(
+                baseline=removed_config,
+                candidate=added_config,
+                summary=_evidence_summary_oneliner(removed_config, added_config),
+            ),
         })
 
 
@@ -835,6 +973,62 @@ def _check_sec10_security_config_relaxation(
 # ---------------------------------------------------------------------------
 # Helper functions
 # ---------------------------------------------------------------------------
+
+
+def _evidence_point(p: Dict) -> Dict:
+    """Convert a raw pattern dict into an evidence point."""
+    return {
+        "file": p.get("file", ""),
+        "line": p.get("line_number", 0),
+        "kind": p.get("kind", ""),
+        "pattern": p.get("pattern", ""),
+        "snippet": p.get("context", "") or p.get("pattern", ""),
+    }
+
+
+def _build_evidence(
+    baseline: Optional[List[Dict]] = None,
+    candidate: Optional[List[Dict]] = None,
+    summary: str = "",
+) -> Dict:
+    """Convert raw pattern dicts into a structured evidence block.
+
+    Returns a dict suitable for inclusion in rule_triggers:
+        {
+            "baseline": [{"file": ..., "line": ..., "kind": ..., "pattern": ...}, ...],
+            "candidate": [...],
+            "summary": "Human-readable explanation of the evidence"
+        }
+    """
+    return {
+        "baseline": [_evidence_point(p) for p in (baseline or [])],
+        "candidate": [_evidence_point(p) for p in (candidate or [])],
+        "summary": summary,
+    }
+
+
+def _evidence_summary_oneliner(
+    baseline_patterns: Optional[List[Dict]] = None,
+    candidate_patterns: Optional[List[Dict]] = None,
+) -> str:
+    """Build a compact one-line evidence summary for display.
+
+    Format: 'baseline file:line pattern → candidate file:line pattern'
+    or 'baseline file:line pattern → candidate none'
+    """
+    parts = []
+    for label, pats in [("baseline", baseline_patterns), ("candidate", candidate_patterns)]:
+        if pats:
+            items = []
+            for p in pats[:2]:
+                f = p.get("file", "?").rsplit("/", 1)[-1]
+                ln = p.get("line_number", "?")
+                pat = p.get("pattern", "?")[:40]
+                items.append(f"{f}:{ln} {pat}")
+            parts.append(f"{label} " + ", ".join(items))
+        else:
+            parts.append(f"{label} none")
+    return " → ".join(parts)
 
 
 def _group_by_kind(patterns: List[Dict]) -> Dict[str, List[Dict]]:

@@ -5,18 +5,27 @@ Runs the CodeGate security policy gate (SEC-6~10) on pre-built backend
 fixtures to demonstrate detection of auth removal, tenant scope deletion,
 user-controlled privilege trust, and security config relaxation.
 
+Also validates safe refactoring scenarios (T13-T16) to prove CodeGate
+does NOT produce false positives on security-equivalent refactors.
+
 No API keys, no LLM calls, no network access required.
 
 Usage:
     .venv/bin/python benchmarks/fixtures/backend_security_demo/run_demo.py
 
-Scenarios:
+Blocking Drift Scenarios:
     T7:  auth preserved        → approve
     T8:  auth removed          → escalate_to_human  (SEC-6)
     T9:  tenant scope preserved → approve
     T10: tenant scope removed  → escalate_to_human  (SEC-8)
     T11: user role trusted     → revise_code         (SEC-9)
     T12: security config relaxed → revise_code       (SEC-10)
+
+Safe Refactor Scenarios:
+    T13: auth decorator → middleware       → approve/advisory
+    T14: tenant filter → service layer     → approve/advisory
+    T15: inline role check → helper func   → approve/advisory
+    T16: CORS hardcoded → env/config       → approve/advisory
 """
 
 from __future__ import annotations
@@ -108,11 +117,25 @@ def run_security_gate(
         "security_warnings": sec_result.security_warnings,
         "override_decision": sec_result.override_decision,
         "rule_triggers": [
-            {"rule": t.get("rule", "?"), "case": t.get("case", ""),
-             "decision": t.get("decision", "")}
+            {
+                "rule": t.get("rule", "?"),
+                "case": t.get("case", ""),
+                "decision": t.get("decision", ""),
+                "severity": t.get("severity", ""),
+                "reason": t.get("reason", ""),
+                "evidence_summary": _extract_evidence_summary(t),
+            }
             for t in sec_result.rule_triggers
         ],
     }
+
+
+def _extract_evidence_summary(trigger: dict) -> str:
+    """Extract a one-line evidence summary from a rule trigger."""
+    ev = trigger.get("evidence")
+    if isinstance(ev, dict) and ev.get("summary"):
+        return ev["summary"]
+    return ""
 
 
 def run_scenario(
@@ -135,6 +158,10 @@ def run_scenario(
         c_files = changed.get(lang_name, {})
 
         if not b_files and not c_files:
+            continue
+
+        # If scenario has no files for this language, skip it entirely
+        if b_files and not c_files:
             continue
 
         result = run_security_gate(b_files, c_files, lang_name)
@@ -212,6 +239,8 @@ def print_scenario(data: dict) -> None:
         if r["rule_triggers"]:
             for t in r["rule_triggers"][:3]:
                 print(f"    📋 [{t['rule']}] {t['case']} → {t['decision']}")
+                if t.get("evidence_summary"):
+                    print(f"       evidence: {t['evidence_summary'][:80]}")
 
 
 # Shorthand for all-approve
@@ -224,13 +253,15 @@ ALL_APPROVE = {
 
 def main():
     print("=" * 70)
-    print("  CodeGate Backend Security Gate Demo — Zero-LLM Reproducible")
-    print("  Demonstrates: SEC-6 ~ SEC-10 across Python/Java/Express")
+    print("  CodeGate Backend Security Gate Demo v0.5 — Zero-LLM Reproducible")
+    print("  Demonstrates: SEC-6 ~ SEC-10 with structured evidence")
+    print("  Validates: T7-T12 blocking drift + T13-T16 safe refactoring")
     print("=" * 70)
 
     baseline = load_fixture("baseline")
 
-    scenarios = [
+    # --- Blocking Drift Scenarios ---
+    blocking_scenarios = [
         ("T7: Auth Preserved", "t7_auth_preserved",
          ALL_APPROVE, []),
 
@@ -251,40 +282,83 @@ def main():
 
         ("T11: User Role Trusted", "t11_user_role_trusted",
          {"python_fastapi": "revise_code",
-          "java_spring": None,   # baseline copy, no change
-          "node_express": None}, # baseline copy, no change
+          "java_spring": None,
+          "node_express": None},
          ["SEC-9"]),
 
         ("T12: Security Config Relaxed", "t12_security_config_relaxed",
          {"python_fastapi": "revise_code",
-          "java_spring": None,       # baseline copy, no change
+          "java_spring": None,
           "node_express": "revise_code"},
          ["SEC-10"]),
     ]
 
-    results = []
-    for name, dir_name, expected, rules in scenarios:
+    # --- Safe Refactor Scenarios (T13-T16) ---
+    safe_refactor_scenarios = [
+        ("T13: Auth Refactor Equivalent", "t13_auth_refactor_equivalent",
+         ALL_APPROVE, []),
+
+        ("T14: Tenant Scope Moved", "t14_tenant_scope_moved",
+         ALL_APPROVE, []),
+
+        ("T15: Role Check Helper", "t15_role_check_helper",
+         ALL_APPROVE, []),
+
+        ("T16: Security Config Env", "t16_security_config_env",
+         ALL_APPROVE, []),
+    ]
+
+    all_results = []
+
+    # Run blocking drift scenarios
+    print(f"\n{'─' * 70}")
+    print("  🔒 BLOCKING DRIFT SCENARIOS (T7-T12)")
+    print(f"{'─' * 70}")
+    for name, dir_name, expected, rules in blocking_scenarios:
         passed, data = run_scenario(name, dir_name, baseline, expected, rules)
+        data["group"] = "blocking"
         print_scenario(data)
-        results.append(data)
+        all_results.append(data)
+
+    # Run safe refactor scenarios
+    print(f"\n{'─' * 70}")
+    print("  🔄 SAFE REFACTOR SCENARIOS (T13-T16)")
+    print(f"{'─' * 70}")
+    for name, dir_name, expected, rules in safe_refactor_scenarios:
+        passed, data = run_scenario(name, dir_name, baseline, expected, rules)
+        data["group"] = "safe_refactor"
+        print_scenario(data)
+        all_results.append(data)
 
     # Summary
     print(f"\n{'=' * 70}")
     print("  SUMMARY")
     print(f"{'=' * 70}")
+
+    blocking_results = [r for r in all_results if r.get("group") == "blocking"]
+    safe_results = [r for r in all_results if r.get("group") == "safe_refactor"]
+
+    print(f"\n  🔒 Blocking Drift:")
     print(f"  {'Scenario':35s} {'Expected':20s} {'Result':10s}")
     print(f"  {'-' * 65}")
-    for r in results:
+    for r in blocking_results:
         badge = "✅" if r["pass"] else "❌"
         print(f"  {r['scenario']:35s} {r['expected']:20s} {badge}")
 
-    all_pass = all(r["pass"] for r in results)
+    print(f"\n  🔄 Safe Refactor (false positive check):")
+    print(f"  {'Scenario':35s} {'Expected':20s} {'Result':10s}")
+    print(f"  {'-' * 65}")
+    for r in safe_results:
+        badge = "✅" if r["pass"] else "❌"
+        print(f"  {r['scenario']:35s} {r['expected']:20s} {badge}")
+
+    all_pass = all(r["pass"] for r in all_results)
     print()
     if all_pass:
-        print("  ✅ All scenarios passed!")
+        print(f"  ✅ All {len(all_results)} scenarios passed!")
         return 0
     else:
-        failed = [r["scenario"] for r in results if not r["pass"]]
+        failed = [r["scenario"] for r in all_results if not r["pass"]]
         print(f"  ❌ Failed scenarios: {', '.join(failed)}")
         return 1
 
