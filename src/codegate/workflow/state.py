@@ -9,6 +9,7 @@ from codegate.schemas.contract import ImplementationContract
 from codegate.schemas.execution import ExecutionReport
 from codegate.schemas.review import ReviewFinding
 from codegate.schemas.gate import GateDecision
+from codegate.schemas.sandbox import SandboxReport
 
 
 class GovernanceState(BaseModel):
@@ -35,6 +36,9 @@ class GovernanceState(BaseModel):
     # === Executor outputs ===
     execution_report: Optional[ExecutionReport] = None
 
+    # === Sandbox evidence ===
+    sandbox_report: Optional[SandboxReport] = None
+
     # === Review outputs ===
     review_findings: List[ReviewFinding] = Field(default_factory=list)
 
@@ -48,6 +52,9 @@ class GovernanceState(BaseModel):
 
     # === Iteration history (for per-iteration evidence) ===
     iteration_history: List[Dict] = Field(default_factory=list)
+
+    # === Review history (structured multi-round evidence) ===
+    review_history: List[Dict] = Field(default_factory=list)
 
     # === Policy Engine results (for evidence) ===
     policy_violations: List[str] = Field(default_factory=list)

@@ -3,13 +3,18 @@
 This node is the handoff point between the governance layer and the
 execution layer. It takes the approved contract from state, calls the
 configured ExecutorAdapter, and stores the ExecutionReport back into state.
+
+The executor runs inside an ExecutionSandbox to ensure the original
+project directory is never modified by the executor.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 
 from codegate.adapters.executor import ExecutorAdapter, BuiltinLLMExecutor
+from codegate.execution.sandbox import ExecutionSandbox
 from codegate.schemas.work_item import WorkflowStatus
 from codegate.workflow.state import GovernanceState
 
@@ -84,14 +89,37 @@ def run_executor(state: GovernanceState) -> GovernanceState:
         for v in state.policy_violations:
             feedback += f"- ❌ {v}\n"
 
+    # Determine project directory for sandbox isolation.
+    # Prefer adapter's configured project_dir; fall back to cwd.
+    project_dir = _adapter.project_dir or os.getcwd()
+    sandbox = ExecutionSandbox(project_dir, strategy="auto")
+
     try:
+        sandbox.create()
+        logger.info(
+            f"Executor [{_adapter.name}] running in sandbox: "
+            f"{sandbox.sandbox_dir} (strategy={sandbox.strategy})"
+        )
+
         report = _adapter.execute(
             contract=state.contract,
             context=state.work_item.context,
             feedback=feedback,
+            work_dir=str(sandbox.sandbox_dir),
         )
         # Fill in work item ID
         report.work_item_id = state.work_item.id
+
+        # Collect changes and clean up sandbox
+        sandbox.collect_changes()
+        sandbox.cleanup()
+
+        # Store sandbox evidence in state
+        state.sandbox_report = sandbox.report
+        if sandbox.report and sandbox.report.changed_files:
+            logger.info(
+                f"Sandbox collected {len(sandbox.report.changed_files)} changed file(s)"
+            )
 
         # Track tokens if the adapter reported them
         if report.token_usage:
@@ -107,5 +135,13 @@ def run_executor(state: GovernanceState) -> GovernanceState:
     except Exception as e:
         logger.error(f"Executor [{_adapter.name}] failed: {e}")
         state.error = f"Execution failed ({_adapter.name}): {e}"
+        # Preserve sandbox evidence even on failure
+        try:
+            sandbox.collect_changes()
+            if sandbox.report and sandbox.report.cleanup_status == "pending":
+                sandbox.report.cleanup_status = "preserved"
+            state.sandbox_report = sandbox.report
+        except Exception:
+            pass
 
     return state

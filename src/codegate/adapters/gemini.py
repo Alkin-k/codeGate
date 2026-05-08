@@ -110,12 +110,16 @@ class GeminiCLIAdapter(ExecutorAdapter):
         contract: ImplementationContract,
         context: str = "",
         feedback: str = "",
+        work_dir: str = "",
     ) -> ExecutionReport:
         """Execute the contract via Gemini CLI."""
 
         prompt = self._build_prompt(contract, context, feedback)
-        work_dir = self._resolve_work_dir()
-        sandbox_created = work_dir != self._project_dir
+        if not work_dir:
+            work_dir = self._resolve_work_dir()
+            externally_managed = False
+        else:
+            externally_managed = True
 
         logger.info(
             f"Gemini CLI executing in: {work_dir} "
@@ -238,11 +242,13 @@ class GeminiCLIAdapter(ExecutorAdapter):
                 execution_time_seconds=elapsed,
             )
         finally:
-            # Clean up sandbox if we created one
-            if sandbox_created and work_dir and os.path.exists(work_dir):
+            # Only clean up work_dir if the adapter created it internally.
+            # When work_dir is passed from ExecutionSandbox, the sandbox
+            # manages its own lifecycle.
+            if not externally_managed and work_dir and os.path.exists(work_dir):
                 try:
                     shutil.rmtree(work_dir)
-                    logger.debug(f"Cleaned up sandbox: {work_dir}")
+                    logger.debug(f"Cleaned up adapter sandbox: {work_dir}")
                 except Exception:
                     pass
 

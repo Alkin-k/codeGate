@@ -21,6 +21,7 @@ Rule inventory:
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 from codegate.schemas.work_item import WorkflowStatus
 from codegate.workflow.state import GovernanceState
@@ -331,5 +332,26 @@ def apply_policy_override(state: GovernanceState) -> GovernanceState:
                 policy_result.override_decision, WorkflowStatus.ESCALATED
             )
             state.work_item.transition_to(new_status)
+
+    # Append structured review history for this iteration.
+    # This preserves all rounds of evidence — never overwrites previous entries.
+    history_entry = {
+        "iteration": state.iteration,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "review_findings": [
+            f.model_dump(mode="json") for f in state.review_findings
+        ],
+        "raw_review_findings": [
+            f.model_dump(mode="json") for f in state.raw_review_findings
+        ],
+        "suppressed_findings": list(state.suppressed_findings),
+        "policy_result": policy_dict,
+        "gate_decision": (
+            state.gate_decision.model_dump(mode="json")
+            if state.gate_decision
+            else None
+        ),
+    }
+    state.review_history.append(history_entry)
 
     return state

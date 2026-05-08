@@ -1,0 +1,22 @@
+scenarios:
+  - id: smoke_01_hello
+    name: "Hello World Function"
+    requirement: |
+      Create a Python file hello.py with a function hello() that returns the string "hello world".
+    context: "Empty Python project with __init__.py"
+    eval_criteria:
+      - "File hello.py exists"
+      - "Function hello() returns 'hello world'"
+    risk_level: low
+
+  - id: smoke_02_add
+    name: "Addition Function"
+    requirement: |
+      Create a Python file math_utils.py with a function add(a, b) that returns the sum of a and b.
+      Include type hints for int arguments and int return.
+    context: "Empty Python project"
+    eval_criteria:
+      - "File math_utils.py exists"
+      - "Function add(1, 2) returns 3"
+      - "Function has type hints"
+    risk_level: low

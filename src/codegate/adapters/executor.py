@@ -37,12 +37,22 @@ class ExecutorAdapter(ABC):
         """Human-readable name of this executor (e.g., 'claude_code', 'omo')."""
         ...
 
+    @property
+    def project_dir(self) -> str:
+        """The project directory this adapter operates on.
+
+        Returns the configured project_dir, or empty string if not set.
+        Used by ExecutionSandbox to determine the directory to protect.
+        """
+        return getattr(self, "_project_dir", "") or ""
+
     @abstractmethod
     def execute(
         self,
         contract: ImplementationContract,
         context: str = "",
         feedback: str = "",
+        work_dir: str = "",
     ) -> ExecutionReport:
         """Execute the contract and return a report.
 
@@ -51,6 +61,8 @@ class ExecutorAdapter(ABC):
             context: Project context (tech stack, existing code info).
             feedback: Optional feedback from a previous review round
                       (for revision cycles).
+            work_dir: If set, the executor MUST run in this directory
+                      (sandbox isolation). If empty, use adapter default.
 
         Returns:
             ExecutionReport with code_output, file_list, summary, etc.
@@ -75,6 +87,7 @@ class BuiltinLLMExecutor(ExecutorAdapter):
         contract: ImplementationContract,
         context: str = "",
         feedback: str = "",
+        work_dir: str = "",
     ) -> ExecutionReport:
         from codegate.config import get_config
         from codegate.llm import call_llm_json, load_prompt

@@ -86,11 +86,13 @@ class CodexCLIAdapter(ExecutorAdapter):
         contract: ImplementationContract,
         context: str = "",
         feedback: str = "",
+        work_dir: str = "",
     ) -> ExecutionReport:
         """Execute the contract via Codex CLI."""
 
         prompt = self._build_prompt(contract, context, feedback)
-        work_dir = self._resolve_work_dir()
+        if not work_dir:
+            work_dir = self._resolve_work_dir()
 
         logger.info(
             f"Codex CLI executing in: {work_dir} "

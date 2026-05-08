@@ -9,6 +9,7 @@ from codegate.schemas.contract import (
 from codegate.schemas.execution import ExecutionReport
 from codegate.schemas.review import ReviewFinding
 from codegate.schemas.gate import GateDecision
+from codegate.schemas.sandbox import SandboxReport
 
 __all__ = [
     "WorkItem",
@@ -19,4 +20,5 @@ __all__ = [
     "ExecutionReport",
     "ReviewFinding",
     "GateDecision",
+    "SandboxReport",
 ]

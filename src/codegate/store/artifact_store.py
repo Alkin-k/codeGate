@@ -60,6 +60,22 @@ class ArtifactStore:
                 state.execution_report.model_dump(mode="json"),
             )
 
+        # Save sandbox report (if executor ran in sandbox)
+        if state.sandbox_report:
+            self._save_json(
+                run_dir / "sandbox_report.json",
+                state.sandbox_report.model_dump(mode="json"),
+            )
+            # Save diff/patch content directly (survives sandbox cleanup)
+            if state.sandbox_report.diff_content:
+                (run_dir / "candidate.diff").write_text(
+                    state.sandbox_report.diff_content, encoding="utf-8"
+                )
+            if state.sandbox_report.patch_content:
+                (run_dir / "candidate.patch").write_text(
+                    state.sandbox_report.patch_content, encoding="utf-8"
+                )
+
         # Save review findings — always persist, even when empty ([])
         # This ensures CLI evidence is machine-comparable with benchmark evidence.
         self._save_json(
@@ -115,6 +131,22 @@ class ArtifactStore:
                 iter_dir.mkdir(exist_ok=True)
                 self._save_json(iter_dir / "gate_snapshot.json", entry)
 
+        # Save review history (structured multi-round evidence)
+        if state.review_history:
+            self._save_json(run_dir / "review_history.json", state.review_history)
+            # Also save per-iteration review/policy/gate files
+            iterations_dir = run_dir / "iterations"
+            for entry in state.review_history:
+                iter_num = entry.get("iteration", 0)
+                iter_dir = iterations_dir / str(iter_num)
+                iter_dir.mkdir(parents=True, exist_ok=True)
+                if "review_findings" in entry:
+                    self._save_json(iter_dir / "review_findings.json", entry["review_findings"])
+                if "policy_result" in entry:
+                    self._save_json(iter_dir / "policy_result.json", entry["policy_result"])
+                if "gate_decision" in entry:
+                    self._save_json(iter_dir / "gate_decision.json", entry["gate_decision"])
+
         # Save run summary
         # Derive gatekeeper's original decision from policy_result if available
         gatekeeper_original = None
@@ -134,7 +166,10 @@ class ArtifactStore:
                 if state.execution_report and hasattr(state.execution_report, "timed_out")
                 else False
             ),
-            "completed_iterations": len(state.iteration_history),
+            "completed_iterations": (
+                len(state.review_history) if state.review_history
+                else len(state.iteration_history)
+            ),
             "max_iterations": state.max_iterations,
             "total_tokens": state.total_tokens,
             "phase_tokens": state.phase_tokens,
@@ -177,6 +212,10 @@ class ArtifactStore:
         }
         self._save_json(run_dir / "summary.json", summary)
 
+        # Generate and save run manifest (index of all artifacts)
+        manifest = self._generate_manifest(run_dir, state)
+        self._save_json(run_dir / "run_manifest.json", manifest)
+
         logger.info(f"Artifacts saved to: {run_dir}")
         return run_dir
 
@@ -186,6 +225,45 @@ class ArtifactStore:
             json.dumps(data, indent=2, ensure_ascii=False, default=str),
             encoding="utf-8",
         )
+
+    def _generate_manifest(self, run_dir: Path, state: GovernanceState) -> dict:
+        """Generate a run manifest that indexes all artifacts produced by this run.
+
+        All paths are relative to run_dir. No absolute filesystem paths
+        appear in the manifest so it remains valid after the run directory
+        is moved or archived.
+        """
+
+        def _rel_or_none(filename: str) -> str | None:
+            """Return relative path if file exists in run_dir, else None."""
+            return filename if (run_dir / filename).exists() else None
+
+        manifest = {
+            "work_item_id": state.work_item.id,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "artifacts": {},
+        }
+
+        # Scan run_dir for all .json files and index them (relative paths)
+        for json_file in sorted(run_dir.rglob("*.json")):
+            rel = str(json_file.relative_to(run_dir))
+            manifest["artifacts"][rel] = rel
+
+        # Add explicit pointers to key artifacts (all relative)
+        manifest["work_item"] = _rel_or_none("work_item.json")
+        manifest["contract"] = _rel_or_none("contract.json")
+        manifest["execution_report"] = _rel_or_none("execution_report.json")
+        manifest["sandbox_report"] = _rel_or_none("sandbox_report.json")
+        manifest["review_history"] = _rel_or_none("review_history.json")
+        manifest["policy_result"] = _rel_or_none("policy_result.json")
+        manifest["gate_decision"] = _rel_or_none("gate_decision.json")
+        manifest["summary"] = _rel_or_none("summary.json")
+
+        # Candidate diff/patch — only present when content was persisted
+        manifest["candidate_diff"] = _rel_or_none("candidate.diff")
+        manifest["candidate_patch"] = _rel_or_none("candidate.patch")
+
+        return manifest
 
     def load_summary(self, work_item_id: str) -> dict | None:
         """Load a run summary by work item ID."""
