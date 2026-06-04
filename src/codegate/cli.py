@@ -287,6 +287,15 @@ def run(
     # Display results
     _display_results(state, run_dir)
 
+    # v0.7: print the machine-readable governance verdict summary.
+    verdict_path = run_dir / "verdict.json"
+    if verdict_path.exists():
+        from codegate.schemas.verdict import GovernanceVerdict
+
+        verdict = GovernanceVerdict.model_validate(json.loads(verdict_path.read_text()))
+        console.print(f"\n[dim]Run ID: {run_dir.name}[/dim]")
+        _print_verdict_panel(verdict, title="🛡️ Governance Verdict")
+
 
 @app.command()
 def ab(
@@ -469,6 +478,203 @@ def history():
         )
 
     console.print(table)
+
+
+# ===========================================================================
+# v0.7 Governance Contract Runtime — `codegate runs` command group
+# ===========================================================================
+
+runs_app = typer.Typer(
+    name="runs",
+    help="Query, compare, and replay durable governance run records.",
+    add_completion=False,
+)
+app.add_typer(runs_app, name="runs")
+
+
+@runs_app.command("list")
+def runs_list():
+    """List all governance runs (v0.7 runs/ layout)."""
+    init_config()
+    from codegate.store.artifact_store import ArtifactStore
+
+    store = ArtifactStore()
+    metas = store.list_run_metadata()
+
+    if not metas:
+        console.print("[dim]No governance runs found.[/dim]")
+        raise typer.Exit(0)
+
+    table = Table(title="Governance Runs")
+    table.add_column("Run ID", style="cyan")
+    table.add_column("Work Item", style="dim")
+    table.add_column("Status")
+    table.add_column("Executor")
+    table.add_column("Sandbox")
+    table.add_column("Started", style="dim")
+
+    for m in metas:
+        status_style = {
+            "completed": "[green]completed[/green]",
+            "failed": "[red]failed[/red]",
+            "running": "[yellow]running[/yellow]",
+            "cancelled": "[dim]cancelled[/dim]",
+        }.get(m.status, m.status)
+        table.add_row(
+            m.run_id,
+            (m.work_item_id or "?")[:12],
+            status_style,
+            m.executor_name or "—",
+            m.sandbox_strategy or "—",
+            m.started_at,
+        )
+
+    console.print(table)
+
+
+@runs_app.command("show")
+def runs_show(run_id: str = typer.Argument(..., help="The run_id to display")):
+    """Show the governance verdict and evidence for a single run."""
+    init_config()
+    from codegate.store.artifact_store import ArtifactStore
+
+    store = ArtifactStore()
+    try:
+        bundle = store.load_run(run_id)
+    except FileNotFoundError:
+        console.print(f"[red]Run not found: {run_id}[/red]")
+        raise typer.Exit(1)
+
+    _print_verdict_panel(bundle.verdict, title=f"🛡️ Verdict — {run_id}")
+
+    if bundle.metadata:
+        m = bundle.metadata
+        meta_table = Table(title="Run Metadata", border_style="blue")
+        meta_table.add_column("Field", style="bold")
+        meta_table.add_column("Value")
+        meta_table.add_row("CodeGate version", m.codegate_version)
+        meta_table.add_row("Started", m.started_at)
+        meta_table.add_row("Completed", m.completed_at or "—")
+        meta_table.add_row("Project dir", m.project_dir or "—")
+        meta_table.add_row("Git base ref", m.git_base_ref or "—")
+        console.print(meta_table)
+
+    console.print(
+        f"\n[dim]Evidence completeness: {bundle.completeness_score:.0%} "
+        f"({len(bundle.present)}/{len(bundle.present) + len(bundle.missing)} artifacts)"
+        f" | Artifacts: {bundle.run_dir}[/dim]"
+    )
+
+
+@runs_app.command("diff")
+def runs_diff(
+    run_a: str = typer.Argument(..., help="First run_id"),
+    run_b: str = typer.Argument(..., help="Second run_id"),
+):
+    """Compare two governance runs at the verdict/artifact level."""
+    init_config()
+    from codegate.store.artifact_store import ArtifactStore
+
+    store = ArtifactStore()
+    try:
+        diff = store.diff_runs(run_a, run_b)
+    except FileNotFoundError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
+
+    a, b = diff["a"], diff["b"]
+    differing = set(diff["differing_fields"])
+
+    table = Table(title=f"Run Diff: {run_a}  vs  {run_b}", border_style="blue")
+    table.add_column("Field", style="bold")
+    table.add_column(run_a[:24])
+    table.add_column(run_b[:24])
+
+    for key in (
+        "final_decision", "approved", "requires_human", "risk_level",
+        "executor_name", "sandbox_strategy", "changed_files_count",
+        "blocking_findings_count", "policy_violations_count",
+        "completed_iterations", "completeness_score",
+    ):
+        marker = "[yellow]≠[/yellow] " if key in differing else "  "
+        table.add_row(f"{marker}{key}", str(a.get(key)), str(b.get(key)))
+
+    console.print(table)
+    if not differing:
+        console.print("[green]No governance differences between these runs.[/green]")
+
+
+@runs_app.command("replay")
+def runs_replay(run_id: str = typer.Argument(..., help="The run_id to replay")):
+    """Replay-lite: reload a run from artifacts and validate completeness.
+
+    This does NOT re-invoke any LLM, executor, reviewer, or policy engine — it
+    only reloads persisted artifacts and reports evidence completeness.
+    """
+    init_config()
+    from codegate.store.artifact_store import ArtifactStore
+
+    store = ArtifactStore()
+    try:
+        bundle = store.load_run(run_id)
+    except FileNotFoundError:
+        console.print(f"[red]Run not found: {run_id}[/red]")
+        raise typer.Exit(1)
+
+    complete = not bundle.missing
+    status_line = (
+        "[green]✅ complete[/green]" if complete
+        else f"[yellow]⚠ incomplete — {len(bundle.missing)} missing[/yellow]"
+    )
+    console.print(Panel(
+        f"Replay status: {status_line}\n"
+        f"Evidence completeness score: [bold]{bundle.completeness_score:.0%}[/bold] "
+        f"({len(bundle.present)}/{len(bundle.present) + len(bundle.missing)})\n"
+        f"[dim]No LLM/executor invoked — artifact-level replay only.[/dim]",
+        title=f"🔁 Replay — {run_id}",
+        border_style="green" if complete else "yellow",
+    ))
+
+    if bundle.missing:
+        console.print("[yellow]Missing artifacts:[/yellow]")
+        for item in bundle.missing:
+            console.print(f"  • {item}")
+
+    _print_verdict_panel(bundle.verdict, title="Final Verdict")
+
+
+def _print_verdict_panel(verdict, title: str = "🛡️ Verdict"):
+    """Render a GovernanceVerdict as a rich panel."""
+    if verdict is None:
+        console.print("[dim]No verdict.json found for this run.[/dim]")
+        return
+
+    color = {
+        "approve": "green",
+        "revise_code": "yellow",
+        "revise_spec": "yellow",
+        "escalate_to_human": "red",
+    }.get(verdict.final_decision, "white")
+
+    lines = [
+        f"[bold {color}]Decision: {(verdict.final_decision or 'N/A').upper()}[/bold {color}]",
+        f"Approved: {verdict.approved} | Requires human: {verdict.requires_human}",
+        f"Risk: {verdict.risk_level} | Executor: {verdict.executor_name or '—'} | "
+        f"Sandbox: {verdict.sandbox_strategy or 'disabled'}",
+        f"Changed files: {verdict.changed_files_count} | "
+        f"Blocking findings: {verdict.blocking_findings_count} | "
+        f"Policy violations: {verdict.policy_violations_count} | "
+        f"Iterations: {verdict.completed_iterations}",
+    ]
+    if verdict.reasons:
+        lines.append("")
+        lines.append("[dim]Reasons:[/dim]")
+        for r in verdict.reasons[:5]:
+            lines.append(f"  • {r}")
+    if verdict.next_action:
+        lines.append(f"\n[dim]Next action: {verdict.next_action}[/dim]")
+
+    console.print(Panel("\n".join(lines), title=title, border_style=color))
 
 
 def _display_results(state, run_dir):
